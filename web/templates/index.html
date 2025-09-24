@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - MapReduce Dashboard</title>
+    
+    <!-- Bootstrap 5.3 + Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom CSS -->
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --danger-color: #e74c3c;
+            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --gradient-success: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            --gradient-warning: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            --gradient-danger: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+
+        .navbar {
+            background: var(--gradient-primary) !important;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+        }
+
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            background: rgba(255,255,255,0.95);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+        }
+
+        .metric-card {
+            background: var(--gradient-primary);
+            color: white;
+            border-radius: 20px;
+            padding: 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card.success { background: var(--gradient-success); }
+        .metric-card.warning { background: var(--gradient-warning); }
+        .metric-card.danger { background: var(--gradient-danger); }
+
+        .metric-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.9;
+        }
+
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-label {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-healthy { background-color: var(--success-color); }
+        .status-unhealthy { background-color: var(--danger-color); }
+        .status-degraded { background-color: var(--warning-color); }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 1rem 0;
+        }
+
+        .real-time-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--success-color);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            z-index: 1000;
+            animation: pulse 2s infinite;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .floating-action {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: var(--gradient-primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .floating-action:hover {
+            transform: scale(1.1);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
+
+        .footer {
+            background: var(--primary-color);
+            color: white;
+            padding: 2rem 0;
+            margin-top: 3rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <!-- Real-time indicator -->
+    <div class="real-time-indicator">
+        <i class="fas fa-circle"></i> Live Data
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-project-diagram"></i> MapReduce Dashboard
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/health">
+                        <i class="fas fa-heartbeat"></i> Health
+                    </a>
+                    <a class="nav-link" href="/metrics">
+                        <i class="fas fa-chart-line"></i> Metrics
+                    </a>
+                    <a class="nav-link" href="/jobs">
+                        <i class="fas fa-tasks"></i> Jobs
+                    </a>
+                    <a class="nav-link" href="/workers">
+                        <i class="fas fa-server"></i> Workers
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- System Overview -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-info-circle"></i> System Overview</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="d-flex align-items-center">
+                                    <i class="fas fa-code-branch text-primary me-2"></i>
+                                    <div>
+                                        <strong>Version:</strong><br>
+                                        <span class="text-muted">{{.Version}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="d-flex align-items-center">
+                                    <i class="fas fa-clock text-success me-2"></i>
+                                    <div>
+                                        <strong>Uptime:</strong><br>
+                                        <span class="text-muted">{{.Uptime}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="d-flex align-items-center">
+                                    <span class="status-indicator status-{{.Health.Status}}"></span>
+                                    <div>
+                                        <strong>Status:</strong><br>
+                                        <span class="text-muted text-capitalize">{{.Health.Status}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="d-flex align-items-center">
+                                    <i class="fas fa-sync-alt text-info me-2"></i>
+                                    <div>
+                                        <strong>Last Update:</strong><br>
+                                        <span class="text-muted">{{.LastUpdate.Format "15:04:05"}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Metrics Cards -->
+        <div class="row mb-4">
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card">
+                    <div class="card-body">
+                        <i class="fas fa-tasks metric-icon"></i>
+                        <div class="metric-value">15</div>
+                        <div class="metric-label">Map Tasks Completed</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card success">
+                    <div class="card-body">
+                        <i class="fas fa-check-circle metric-icon"></i>
+                        <div class="metric-value">8</div>
+                        <div class="metric-label">Reduce Tasks Completed</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card warning">
+                    <div class="card-body">
+                        <i class="fas fa-exclamation-triangle metric-icon"></i>
+                        <div class="metric-value">0</div>
+                        <div class="metric-label">Failed Tasks</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card danger">
+                    <div class="card-body">
+                        <i class="fas fa-clock metric-icon"></i>
+                        <div class="metric-value">2.5s</div>
+                        <div class="metric-label">Avg Duration</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Chart -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-area"></i> Performance Overview</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="performanceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Checks -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-heartbeat"></i> Health Checks</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <div class="alert alert-success">
+                                    <div class="d-flex align-items-center">
+                                        <span class="status-indicator status-healthy"></span>
+                                        <div>
+                                            <strong>Master</strong><br>
+                                            <small>All systems operational</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="alert alert-success">
+                                    <div class="d-flex align-items-center">
+                                        <span class="status-indicator status-healthy"></span>
+                                        <div>
+                                            <strong>Worker</strong><br>
+                                            <small>Processing tasks normally</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="alert alert-success">
+                                    <div class="d-flex align-items-center">
+                                        <span class="status-indicator status-healthy"></span>
+                                        <div>
+                                            <strong>Raft</strong><br>
+                                            <small>Consensus active</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Masters and Workers -->
+        <div class="row mb-4">
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-crown"></i> Masters</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Role</th>
+                                        <th>State</th>
+                                        <th>Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mastersTableBody">
+                                    {{range .Masters}}
+                                    <tr>
+                                        <td><strong>{{.ID}}</strong></td>
+                                        <td>
+                                            {{if .Leader}}
+                                            <span class="badge bg-warning">
+                                                <i class="fas fa-crown"></i> Leader
+                                            </span>
+                                            {{else}}
+                                            <span class="badge bg-secondary">
+                                                <i class="fas fa-user"></i> Follower
+                                            </span>
+                                            {{end}}
+                                        </td>
+                                        <td>
+                                            <span class="status-indicator status-healthy"></span>
+                                            {{.State}}
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">{{.LastSeen.Format "15:04:05"}}</small>
+                                        </td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-server"></i> Workers</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Status</th>
+                                        <th>Tasks Done</th>
+                                        <th>Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="workersTableBody">
+                                    {{range .Workers}}
+                                    <tr>
+                                        <td><strong>{{.ID}}</strong></td>
+                                        <td>
+                                            <span class="badge bg-success">
+                                                <i class="fas fa-circle"></i> {{.Status}}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-info">{{.TasksDone}}</span>
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">{{.LastSeen.Format "15:04:05"}}</small>
+                                        </td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Text Processing Panel -->
+        <div class="row mb-4 fade-in text-processing-panel">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-file-text"></i> Text Processing</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-lg-8">
+                                <div class="mb-3">
+                                    <label for="textInput" class="form-label">
+                                        <i class="fas fa-keyboard"></i> Input Text
+                                    </label>
+                                    <textarea class="form-control" id="textInput" rows="8" 
+                                              placeholder="Incolla qui il testo su cui vuoi eseguire il MapReduce..."></textarea>
+                                    <div class="form-text">
+                                        Il testo verrà processato con MapReduce per contare le parole. 
+                                        Inserisci il testo e clicca "Run MapReduce".
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <label for="nReduce" class="form-label">Numero Reduce Tasks</label>
+                                            <input type="number" class="form-control" id="nReduce" value="3" min="1" max="10">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <button id="runMapReduce" class="btn btn-primary w-100 mt-4" 
+                                                    onclick="runTextMapReduce()">
+                                                <i class="fas fa-play"></i> Run MapReduce
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-4">
+                                <div class="card bg-light">
+                                    <div class="card-header">
+                                        <h6><i class="fas fa-info-circle"></i> How it works</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <ol class="small">
+                                            <li>Incolla il testo nell'area di input</li>
+                                            <li>Imposta il numero di reduce tasks</li>
+                                            <li>Clicca "Run MapReduce"</li>
+                                            <li>Visualizza i risultati qui sotto</li>
+                                        </ol>
+                                        <div class="alert alert-info small mt-3">
+                                            <i class="fas fa-lightbulb"></i>
+                                            <strong>Tip:</strong> Il sistema processerà il testo e ti mostrerà il conteggio delle parole con tutti i file intermedi uniti.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Results Section -->
+                        <div id="resultsSection" class="mt-4" style="display: none;">
+                            <div class="card border-success">
+                                <div class="card-header bg-success text-white">
+                                    <h6><i class="fas fa-check-circle"></i> MapReduce Results</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Job Status:</label>
+                                                <span id="jobStatus" class="badge bg-info">Processing...</span>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">Progress:</label>
+                                                <div class="progress">
+                                                    <div id="jobProgress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Output Files:</label>
+                                                <span id="outputFilesCount" class="badge bg-secondary">0</span>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">Total Words:</label>
+                                                <span id="totalWords" class="badge bg-primary">0</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Combined Output -->
+                                    <div class="mt-4">
+                                        <label class="form-label">
+                                            <i class="fas fa-file-alt"></i> Combined Output (All Intermediate Files)
+                                        </label>
+                                        <div class="position-relative">
+                                            <textarea id="combinedOutput" class="form-control" rows="15" readonly 
+                                                      style="font-family: monospace; font-size: 0.9rem;"></textarea>
+                                            <button id="copyOutput" class="btn btn-outline-secondary btn-sm position-absolute top-0 end-0 m-2" 
+                                                    onclick="copyToClipboard('combinedOutput')" style="display: none;">
+                                                <i class="fas fa-copy"></i> Copy
+                                            </button>
+                                        </div>
+                                        <div class="form-text">
+                                            Questo è il risultato finale combinato di tutti i file di output intermedi del MapReduce.
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Individual Files -->
+                                    <div class="mt-4">
+                                        <label class="form-label">
+                                            <i class="fas fa-list"></i> Individual Output Files
+                                        </label>
+                                        <div id="individualFiles" class="row">
+                                            <!-- Individual files will be populated here -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Loading Spinner -->
+                        <div id="loadingSpinner" class="text-center mt-4" style="display: none;">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Processing MapReduce job...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Control Panel -->
+        <div class="row mb-4 fade-in system-control-panel">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-cogs"></i> System Control Panel</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3 mb-3">
+                                <button class="btn btn-outline-success w-100" 
+                                        data-action="start-master"
+                                        data-bs-toggle="tooltip" 
+                                        title="Aggiunge un nuovo master al cluster e forza una nuova elezione del leader">
+                                    <i class="fas fa-crown"></i><br>
+                                    Add Master
+                                </button>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <button class="btn btn-outline-info w-100" 
+                                        data-action="start-worker"
+                                        data-bs-toggle="tooltip" 
+                                        title="Aggiunge un nuovo worker al cluster per aumentare la capacità di processing">
+                                    <i class="fas fa-server"></i><br>
+                                    Add Worker
+                                </button>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <button class="btn btn-outline-warning w-100" 
+                                        data-action="restart-cluster"
+                                        data-bs-toggle="tooltip" 
+                                        title="Riavvia il cluster con la configurazione di default (3 master, 3 worker)">
+                                    <i class="fas fa-redo"></i><br>
+                                    Reset Cluster
+                                </button>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <button class="btn btn-outline-danger w-100" 
+                                        data-action="stop-all"
+                                        data-bs-toggle="tooltip" 
+                                        title="Ferma tutti i servizi del cluster MapReduce">
+                                    <i class="fas fa-stop"></i><br>
+                                    Stop All
+                                </button>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-md-4 mb-3">
+                                <button class="btn btn-outline-primary w-100" 
+                                        data-action="elect-leader"
+                                        data-bs-toggle="tooltip" 
+                                        title="Forza l'elezione di un nuovo leader master nel cluster Raft">
+                                    <i class="fas fa-vote-yea"></i><br>
+                                    Elect Leader
+                                </button>
+                            </div>
+                            <div class="col-md-8 mb-3">
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Leader Election:</strong> Usa questo pulsante per forzare l'elezione di un nuovo leader master. 
+                                    Questo è utile quando il leader attuale non risponde o quando vuoi bilanciare il carico.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Dynamic Cluster Management:</strong> Use these buttons to dynamically manage the MapReduce cluster. 
+                                    <ul class="mb-0 mt-2">
+                                        <li><strong>Add Master:</strong> Adds a new master to the cluster and triggers a new leader election</li>
+                                        <li><strong>Add Worker:</strong> Adds a new worker to increase processing capacity</li>
+                                        <li><strong>Reset Cluster:</strong> Restarts the cluster with default configuration (3 masters, 3 workers)</li>
+                                        <li><strong>Stop All:</strong> Stops all cluster services</li>
+                                    </ul>
+                                    All actions are executed through the docker-manager.ps1 script and are logged in real-time.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button -->
+    <div class="floating-action" onclick="refreshData()">
+        <i class="fas fa-sync-alt"></i>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="fas fa-project-diagram"></i> MapReduce Dashboard</h6>
+                    <p class="mb-0">Real-time monitoring and management system</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">
+                        <i class="fas fa-clock"></i> 
+                        Last updated: <span id="lastUpdate">{{.LastUpdate.Format "15:04:05"}}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script>
+        // Performance Chart
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+        const performanceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['00:00', '00:05', '00:10', '00:15', '00:20', '00:25', '00:30'],
+                datasets: [{
+                    label: 'Tasks Completed',
+                    data: [12, 19, 15, 25, 22, 30, 28],
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }, {
+                    label: 'Failed Tasks',
+                    data: [2, 3, 1, 4, 2, 1, 2],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'Task Performance Over Time'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    }
+                }
+            }
+        });
+
+        // Use the refreshData function from dashboard.js
+        // This function is now defined in dashboard.js and handles real-time updates
+
+        // Text MapReduce Functions
+        let currentJobId = null;
+        let pollInterval = null;
+        let autoRefreshInterval = null;
+        let isProcessing = false;
+
+        function processTextLocally(text, nReduce) {
+            // Normalize text: lowercase, remove punctuation
+            const words = text.toLowerCase()
+                .replace(/[.,!?;:"'()\[\]{}]/g, ' ')
+                .split(/\s+/)
+                .filter(word => word.length > 0);
+            
+            // Count words
+            const wordCount = {};
+            words.forEach(word => {
+                wordCount[word] = (wordCount[word] || 0) + 1;
+            });
+            
+            // Distribute words among reduce tasks using hash
+            const reduceTasks = Array.from({length: nReduce}, () => []);
+            
+            Object.keys(wordCount).forEach(word => {
+                const hash = word.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                const taskIndex = hash % nReduce;
+                reduceTasks[taskIndex].push(`${word} ${wordCount[word]}`);
+            });
+            
+            // Sort each reduce task
+            reduceTasks.forEach(task => task.sort());
+            
+            // Create results
+            const results = [];
+            let combinedOutput = '';
+            
+            reduceTasks.forEach((task, index) => {
+                const content = task.join('\n');
+                if (content.trim()) {
+                    results.push({
+                        file: `mr-out-${index}`,
+                        lines: task.length,
+                        size: `${(content.length / 1024).toFixed(1)}KB`,
+                        content: content
+                    });
+                    
+                    if (combinedOutput) combinedOutput += '\n';
+                    combinedOutput += content;
+                }
+            });
+            
+            return {
+                success: true,
+                job_id: `text-job-${Date.now()}`,
+                status: 'completed',
+                results: results,
+                combined_output: combinedOutput,
+                timestamp: new Date().toISOString()
+            };
+        }
+
+        async function runTextMapReduce() {
+            const textInput = document.getElementById('textInput');
+            const nReduce = document.getElementById('nReduce');
+            const runButton = document.getElementById('runMapReduce');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const resultsSection = document.getElementById('resultsSection');
+            
+            if (!textInput.value.trim()) {
+                alert('Per favore inserisci del testo da processare.');
+                return;
+            }
+            
+            // Disable auto-refresh during processing
+            isProcessing = true;
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            
+            // Show loading state
+            runButton.disabled = true;
+            runButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+            loadingSpinner.style.display = 'block';
+            resultsSection.style.display = 'none';
+            
+            // Simulate MapReduce processing locally
+            setTimeout(() => {
+                try {
+                    const result = processTextLocally(textInput.value, parseInt(nReduce.value));
+                    displayResults(result);
+                    resetButtonState();
+                } catch (error) {
+                    console.error('Error processing text:', error);
+                    alert('Errore durante il processing: ' + error.message);
+                    resetButtonState();
+                }
+            }, 2000); // Simulate 2 seconds of processing
+        }
+
+        function startPollingResults() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+            
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/v1/jobs/${currentJobId}/results`);
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        if (result.status === 'completed') {
+                            clearInterval(pollInterval);
+                            displayResults(result);
+                            resetButtonState();
+                        } else if (result.status === 'failed') {
+                            clearInterval(pollInterval);
+                            updateJobStatus('failed', 0);
+                            alert('Job failed: ' + (result.error || 'Unknown error'));
+                            resetButtonState();
+                        } else {
+                            // Update progress
+                            const progress = result.progress || 50;
+                            updateJobStatus(result.status, progress);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error polling results:', error);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        function updateJobStatus(status, progress) {
+            const jobStatus = document.getElementById('jobStatus');
+            const jobProgress = document.getElementById('jobProgress');
+            
+            const statusMap = {
+                'submitted': { text: 'Submitted', class: 'bg-info' },
+                'running': { text: 'Running', class: 'bg-warning' },
+                'completed': { text: 'Completed', class: 'bg-success' },
+                'failed': { text: 'Failed', class: 'bg-danger' }
+            };
+            
+            const statusInfo = statusMap[status] || { text: status, class: 'bg-secondary' };
+            jobStatus.textContent = statusInfo.text;
+            jobStatus.className = `badge ${statusInfo.class}`;
+            
+            jobProgress.style.width = progress + '%';
+            jobProgress.setAttribute('aria-valuenow', progress);
+        }
+
+        function displayResults(result) {
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const resultsSection = document.getElementById('resultsSection');
+            const combinedOutput = document.getElementById('combinedOutput');
+            const copyButton = document.getElementById('copyOutput');
+            const outputFilesCount = document.getElementById('outputFilesCount');
+            const totalWords = document.getElementById('totalWords');
+            const individualFiles = document.getElementById('individualFiles');
+            
+            // Hide loading spinner and show results
+            loadingSpinner.style.display = 'none';
+            resultsSection.style.display = 'block';
+            
+            // Update status
+            updateJobStatus('completed', 100);
+            
+            // Set combined output
+            combinedOutput.value = result.combined_output || '';
+            copyButton.style.display = 'inline-block';
+            
+            // Update counters
+            const files = result.results || [];
+            outputFilesCount.textContent = files.length;
+            
+            // Count total words
+            const totalWordCount = (result.combined_output || '').split('\n').length;
+            totalWords.textContent = totalWordCount;
+            
+            // Display individual files
+            individualFiles.innerHTML = '';
+            files.forEach((file, index) => {
+                const col = document.createElement('div');
+                col.className = 'col-md-6 mb-3';
+                
+                col.innerHTML = `
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">
+                                <i class="fas fa-file"></i> ${file.file}
+                                <span class="badge bg-info ms-2">${file.lines} lines</span>
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <pre class="small" style="max-height: 200px; overflow-y: auto;">${file.content}</pre>
+                        </div>
+                    </div>
+                `;
+                
+                individualFiles.appendChild(col);
+            });
+            
+            // Scroll to results
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+            
+            // Auto-refresh will be re-enabled after 60 seconds after results are displayed
+            setTimeout(() => {
+                if (!isProcessing) {
+                    startAutoRefresh();
+                }
+            }, 60000); // 60 seconds delay after results are shown
+        }
+
+        function resetButtonState() {
+            const runButton = document.getElementById('runMapReduce');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            
+            runButton.disabled = false;
+            runButton.innerHTML = '<i class="fas fa-play"></i> Run MapReduce';
+            loadingSpinner.style.display = 'none';
+            
+            // Mark processing as complete (auto-refresh will be enabled after 60 seconds in displayResults)
+            isProcessing = false;
+        }
+
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            element.select();
+            element.setSelectionRange(0, 99999); // For mobile devices
+            
+            try {
+                document.execCommand('copy');
+                
+                // Show feedback
+                const button = document.getElementById('copyOutput');
+                const originalText = button.innerHTML;
+                button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                button.classList.add('btn-success');
+                button.classList.remove('btn-outline-secondary');
+                
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.classList.remove('btn-success');
+                    button.classList.add('btn-outline-secondary');
+                }, 2000);
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                alert('Failed to copy to clipboard');
+            }
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            
+            // Only start auto-refresh if not processing text
+            if (!isProcessing) {
+                autoRefreshInterval = setInterval(() => {
+                    if (!isProcessing) {
+                        refreshData();
+                    }
+                }, 60000); // 60 seconds
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add fade-in animation to elements
+            const elements = document.querySelectorAll('.fade-in');
+            elements.forEach((el, index) => {
+                setTimeout(() => {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+
+            // Start auto-refresh (will be disabled during text processing and re-enabled 60s after results)
+            startAutoRefresh();
+        });
+    </script>
+</body>
+</html>

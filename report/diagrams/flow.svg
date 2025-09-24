@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="680" viewBox="0 0 960 680">
+  <defs>
+    <style>
+      .box { fill:#eefbf4; stroke:#1e9e5a; stroke-width:2; rx:8; ry:8; }
+      .step { fill:#ffffff; stroke:#1e9e5a; stroke-width:2; rx:8; ry:8; }
+      .title { font: bold 18px sans-serif; fill:#1b1f23; }
+      .text { font: 14px sans-serif; fill:#1b1f23; }
+      .arrow { stroke:#333; stroke-width:2; marker-end:url(#arrowhead); }
+      .timeout-arrow { stroke:#ff4d4f; stroke-width:2; marker-end:url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Flusso MapReduce e gestione dei guasti</text>
+
+  <!-- Steps -->
+  <rect class="step" x="60" y="80" width="360" height="100" />
+  <text class="text" x="80" y="110">1) AssignTask (leader)</text>
+  <text class="text" x="80" y="130">Master assegna Map/Reduce</text>
+  <text class="text" x="80" y="150">Marca InProgress + timestamp</text>
+  <text class="text" x="80" y="170">Solo leader risponde</text>
+
+  <rect class="step" x="540" y="80" width="360" height="100" />
+  <text class="text" x="560" y="110">2) Map</text>
+  <text class="text" x="560" y="130">Scrive file temporanei</text>
+  <text class="text" x="560" y="150">Sync() + Rename()</text>
+  <text class="text" x="560" y="170">Partizioni per reduce</text>
+
+  <rect class="step" x="60" y="220" width="360" height="100" />
+  <text class="text" x="80" y="250">3) TaskCompleted(Map)</text>
+  <text class="text" x="80" y="270">Comando replicato Raft</text>
+  <text class="text" x="80" y="290">Avanzamento + passaggio</text>
+  <text class="text" x="80" y="310">a ReducePhase</text>
+
+  <rect class="step" x="540" y="220" width="360" height="100" />
+  <text class="text" x="560" y="250">4) Reduce</text>
+  <text class="text" x="560" y="270">Merge + sort per chiave</text>
+  <text class="text" x="560" y="290">Sync() + Rename()</text>
+  <text class="text" x="560" y="310">Output finale</text>
+
+  <rect class="step" x="60" y="360" width="360" height="100" />
+  <text class="text" x="80" y="390">5) TaskCompleted(Reduce)</text>
+  <text class="text" x="80" y="410">Comando replicato Raft</text>
+  <text class="text" x="80" y="430">Completamento job</text>
+  <text class="text" x="80" y="450">DonePhase</text>
+
+  <rect class="box" x="60" y="500" width="840" height="160" />
+  <text class="text" x="80" y="530">Monitor timeout (solo leader): ogni 2s controlla task InProgress</text>
+  <text class="text" x="80" y="550">Se durata > 15s, reimposta stato a Idle per riassegnazione</text>
+  <text class="text" x="80" y="570">Gestisce crash di Mapper/Reducer senza risultati parziali</text>
+  <text class="text" x="80" y="590">Idempotenza garantita da rinomina atomica</text>
+
+  <!-- Arrows -->
+  <line class="arrow" x1="420" y1="130" x2="540" y2="130" />
+  <line class="arrow" x1="900" y1="130" x2="420" y2="270" />
+  <line class="arrow" x1="420" y1="270" x2="540" y2="270" />
+  <line class="arrow" x1="900" y1="270" x2="420" y2="410" />
+  
+  <!-- Timeout arrows -->
+  <line class="timeout-arrow" x1="300" y1="500" x2="300" y2="180" />
+  <line class="timeout-arrow" x1="300" y1="500" x2="300" y2="320" />
+  <text class="text" x="310" y="350">Timeout</text>
+
+</svg>
+

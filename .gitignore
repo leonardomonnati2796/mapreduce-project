@@ -1,0 +1,70 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+mapreduce
+mapreduce-dashboard.exe
+cli.exe
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+docker/data/
+docker/docker_logs.txt
+
+# Temporary files
+temp-local/
+*.tmp
+*.temp
+
+# Log files
+*.log
+
+# Output files (keep structure but ignore content)
+data/output/*.txt
+!data/output/.gitkeep
+
+# Report build files
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.fdb_latexmk
+report/*.fls
+report/*.synctex.gz
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bak
+*.backup

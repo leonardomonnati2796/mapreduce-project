@@ -1,0 +1,4 @@
+Il framework MapReduce è un modello per l'elaborazione di grandi set di dati.
+La fase di Map legge i dati e genera coppie chiave-valore.
+La fase di Reduce poi aggrega queste coppie per chiave.
+Questo modello di elaborazione distribuita è fondamentale per l'analisi efficiente di big data.

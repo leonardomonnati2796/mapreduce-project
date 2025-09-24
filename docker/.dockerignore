@@ -1,0 +1,13 @@
+# Ignora file non necessari per il build Docker
+*.exe
+*.log
+temp-local/
+test/
+report/
+scripts/
+web/
+docker/
+.git/
+.gitignore
+README.md
+Makefile

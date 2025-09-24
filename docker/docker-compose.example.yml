@@ -1,0 +1,100 @@
+# Esempio di come utilizzare le macro nel docker-compose.yml
+# Questo file mostra le diverse tecniche per evitare ripetizioni
+
+# 1. VARIABILI COMUNI (x-common-vars)
+# Definisce variabili d'ambiente condivise tra tutti i servizi
+x-common-vars: &common-vars
+  RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234"
+  RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+  TMP_PATH: "/tmp/mapreduce"
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+
+# 2. CONFIGURAZIONE MASTER (x-master-config)
+# Definisce la configurazione comune per tutti i master
+x-master-config: &master-config
+  build: .
+  networks:
+    - mapreduce-net
+  volumes:
+    - intermediate-data:/tmp/mapreduce
+    - ./data:/root/data:ro
+  environment:
+    <<: *common-vars  # Eredita le variabili comuni
+  restart: unless-stopped
+  stop_grace_period: 30s
+
+# 3. CONFIGURAZIONE WORKER (x-worker-config)
+# Definisce la configurazione comune per tutti i worker
+x-worker-config: &worker-config
+  build: .
+  command: ["./mapreduce", "worker"]
+  depends_on: ["master0", "master1", "master2"]
+  networks:
+    - mapreduce-net
+  volumes:
+    - intermediate-data:/tmp/mapreduce
+    - ./data:/root/data:ro
+  environment:
+    RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+    TMP_PATH: "/tmp/mapreduce"
+  restart: unless-stopped
+  stop_grace_period: 30s
+
+# 4. FILE DI INPUT CENTRALIZZATO (x-input-file)
+# Definisce il file di input una sola volta
+x-input-file: &input-file "/root/data/Words.txt"
+
+services:
+  # I master ereditano la configurazione comune e aggiungono solo le differenze
+  master0:
+    <<: *master-config  # Eredita tutta la configurazione master
+    hostname: master0
+    command: ["./mapreduce", "master", "0", *input-file]  # Usa la macro del file
+    ports:
+      - "1234:1234"
+      - "8000:8000"
+      - "9090:9090"
+
+  master1:
+    <<: *master-config
+    hostname: master1
+    command: ["./mapreduce", "master", "1", *input-file]
+    ports:
+      - "1235:1234"
+      - "8001:8001"
+
+  master2:
+    <<: *master-config
+    hostname: master2
+    command: ["./mapreduce", "master", "2", *input-file]
+    ports:
+      - "1236:1234"
+      - "8002:8002"
+
+  # I worker ereditano la configurazione worker
+  worker1:
+    <<: *worker-config
+
+  worker2:
+    <<: *worker-config
+
+# VANTAGGI DELLE MACRO:
+# 1. DRY (Don't Repeat Yourself) - Evita duplicazione di codice
+# 2. Manutenibilità - Cambi una sola volta e si applica ovunque
+# 3. Leggibilità - Configurazione più pulita e organizzata
+# 4. Consistenza - Tutti i servizi usano le stesse configurazioni
+# 5. Flessibilità - Facile aggiungere nuovi master/worker
+
+# COME AGGIUNGERE UN NUOVO MASTER:
+# master3:
+#   <<: *master-config
+#   hostname: master3
+#   command: ["./mapreduce", "master", "3", *input-file]
+#   ports:
+#     - "1237:1234"
+#     - "8003:8003"
+
+# COME CAMBIARE IL FILE DI INPUT:
+# Basta cambiare la riga:
+# x-input-file: &input-file "/root/data/NuovoFile.txt"

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <defs>
+    <style>
+      .box { fill:#f2f6ff; stroke:#2d5bff; stroke-width:2; rx:8; ry:8; }
+      .node { fill:#fff7e6; stroke:#ff9900; stroke-width:2; rx:8; ry:8; }
+      .title { font: bold 18px sans-serif; fill:#1b1f23; }
+      .text { font: 14px sans-serif; fill:#1b1f23; }
+      .arrow { stroke:#333; stroke-width:2; marker-end:url(#arrowhead); }
+      .raft-arrow { stroke:#1890ff; stroke-width:2; marker-end:url(#arrowhead); }
+      .rpc-arrow { stroke:#52c41a; stroke-width:2; marker-end:url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+
+  <rect class="box" x="40" y="40" width="880" height="460" />
+  <text class="title" x="60" y="70">MapReduce Fault-Tolerant - Architettura</text>
+
+  <!-- Masters (Raft cluster) -->
+  <rect class="node" x="120" y="120" width="180" height="100" />
+  <text class="text" x="140" y="150">Master 0</text>
+  <text class="text" x="140" y="170">Raft: 1234</text>
+  <text class="text" x="140" y="190">RPC: 8000</text>
+  <text class="text" x="140" y="210">Leader</text>
+
+  <rect class="node" x="380" y="120" width="180" height="100" />
+  <text class="text" x="400" y="150">Master 1</text>
+  <text class="text" x="400" y="170">Raft: 1234</text>
+  <text class="text" x="400" y="190">RPC: 8001</text>
+  <text class="text" x="400" y="210">Follower</text>
+
+  <rect class="node" x="640" y="120" width="180" height="100" />
+  <text class="text" x="660" y="150">Master 2</text>
+  <text class="text" x="660" y="170">Raft: 1234</text>
+  <text class="text" x="660" y="190">RPC: 8002</text>
+  <text class="text" x="660" y="210">Follower</text>
+
+  <!-- Raft links -->
+  <line class="raft-arrow" x1="300" y1="170" x2="380" y2="170" />
+  <line class="raft-arrow" x1="560" y1="170" x2="640" y2="170" />
+  <line class="raft-arrow" x1="210" y1="220" x2="730" y2="220" />
+
+  <text class="text" x="330" y="110">Cluster Raft (consenso)</text>
+
+  <!-- Workers -->
+  <rect class="node" x="220" y="320" width="200" height="100" />
+  <text class="text" x="240" y="350">Worker 1</text>
+  <text class="text" x="240" y="370">Map/Reduce</text>
+  <text class="text" x="240" y="390">Polling RPC</text>
+  <text class="text" x="240" y="410">Solo Leader</text>
+
+  <rect class="node" x="540" y="320" width="200" height="100" />
+  <text class="text" x="560" y="350">Worker 2</text>
+  <text class="text" x="560" y="370">Map/Reduce</text>
+  <text class="text" x="560" y="390">Polling RPC</text>
+  <text class="text" x="560" y="410">Solo Leader</text>
+
+  <!-- RPC lines to leader -->
+  <line class="rpc-arrow" x1="320" y1="320" x2="320" y2="220" />
+  <line class="rpc-arrow" x1="640" y1="320" x2="640" y2="220" />
+  <text class="text" x="330" y="275">RPC (Assign/Complete)</text>
+
+  <!-- Volume -->
+  <rect class="box" x="370" y="440" width="220" height="50" />
+  <text class="text" x="382" y="470">Volume condiviso</text>
+  <text class="text" x="382" y="485">/tmp/mapreduce</text>
+
+  <line class="arrow" x1="320" y1="420" x2="430" y2="440" />
+  <line class="arrow" x1="640" y1="420" x2="530" y2="440" />
+
+</svg>
+

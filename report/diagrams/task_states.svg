@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <defs>
+    <style>
+      .state { fill:#ffffff; stroke:#6c757d; stroke-width:2; rx:10; ry:10; }
+      .title { font:bold 18px sans-serif; fill:#1b1f23; }
+      .text { font:14px sans-serif; fill:#1b1f23; }
+      .arrow { stroke:#333; stroke-width:2; marker-end:url(#arrowhead); }
+      .phase { fill:#f0f4ff; stroke:#2d5bff; stroke-width:2; rx:10; ry:10; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Macchina a stati dei task e transizioni di fase</text>
+
+  <!-- Phases -->
+  <rect class="phase" x="80" y="80" width="360" height="360" />
+  <text class="text" x="90" y="100">MapPhase</text>
+  <rect class="phase" x="520" y="80" width="360" height="360" />
+  <text class="text" x="530" y="100">ReducePhase</text>
+
+  <!-- States Map -->
+  <rect class="state" x="140" y="160" width="120" height="60" />
+  <text class="text" x="160" y="195">Idle</text>
+  <rect class="state" x="140" y="260" width="120" height="60" />
+  <text class="text" x="150" y="295">InProgress</text>
+  <rect class="state" x="140" y="360" width="120" height="60" />
+  <text class="text" x="150" y="395">Completed</text>
+
+  <line class="arrow" x1="200" y1="220" x2="200" y2="260" />
+  <line class="arrow" x1="200" y1="320" x2="200" y2="360" />
+  <text class="text" x="210" y="245">Assign</text>
+  <text class="text" x="210" y="345">TaskCompleted</text>
+
+  <!-- Transition to ReducePhase -->
+  <line class="arrow" x1="260" y1="390" x2="520" y2="220" />
+  <text class="text" x="330" y="290">tutti Map Completed</text>
+
+  <!-- States Reduce -->
+  <rect class="state" x="580" y="160" width="120" height="60" />
+  <text class="text" x="600" y="195">Idle</text>
+  <rect class="state" x="580" y="260" width="120" height="60" />
+  <text class="text" x="590" y="295">InProgress</text>
+  <rect class="state" x="580" y="360" width="120" height="60" />
+  <text class="text" x="590" y="395">Completed</text>
+
+  <line class="arrow" x1="640" y1="220" x2="640" y2="260" />
+  <line class="arrow" x1="640" y1="320" x2="640" y2="360" />
+  <text class="text" x="650" y="245">Assign</text>
+  <text class="text" x="650" y="345">TaskCompleted</text>
+
+  <!-- DonePhase note -->
+  <text class="text" x="520" y="470">DonePhase quando tutti i Reduce sono Completed</text>
+
+</svg>
+

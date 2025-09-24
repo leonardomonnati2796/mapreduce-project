@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
+  <defs>
+    <style>
+      .state { fill:#ffffff; stroke:#6c757d; stroke-width:2; rx:10; ry:10; }
+      .phase { fill:#f0f4ff; stroke:#2d5bff; stroke-width:2; rx:10; ry:10; }
+      .raft-state { fill:#fff7e6; stroke:#fa8c16; stroke-width:2; rx:10; ry:10; }
+      .title { font:bold 18px sans-serif; fill:#1b1f23; }
+      .text { font:14px sans-serif; fill:#1b1f23; }
+      .arrow { stroke:#333; stroke-width:2; marker-end:url(#arrowhead); }
+      .phase-arrow { stroke:#2d5bff; stroke-width:3; marker-end:url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Diagramma di stati del Master</text>
+
+  <!-- Raft states -->
+  <rect class="raft-state" x="80" y="80" width="200" height="80" />
+  <text class="text" x="100" y="110">Raft State</text>
+  <text class="text" x="100" y="130">Follower</text>
+  <text class="text" x="100" y="150">(default)</text>
+
+  <rect class="raft-state" x="320" y="80" width="200" height="80" />
+  <text class="text" x="340" y="110">Raft State</text>
+  <text class="text" x="340" y="130">Candidate</text>
+  <text class="text" x="340" y="150">(elezione)</text>
+
+  <rect class="raft-state" x="560" y="80" width="200" height="80" />
+  <text class="text" x="580" y="110">Raft State</text>
+  <text class="text" x="580" y="130">Leader</text>
+  <text class="text" x="580" y="150">(serve RPC)</text>
+
+  <line class="arrow" x1="280" y1="120" x2="320" y2="120" />
+  <text class="text" x="290" y="110">timeout</text>
+
+  <line class="arrow" x1="520" y1="120" x2="560" y2="120" />
+  <text class="text" x="530" y="110">elected</text>
+
+  <line class="arrow" x1="580" y1="160" x2="340" y2="160" />
+  <text class="text" x="450" y="150">fail</text>
+
+  <!-- Job phases -->
+  <rect class="phase" x="80" y="220" width="200" height="100" />
+  <text class="text" x="100" y="250">MapPhase</text>
+  <text class="text" x="100" y="270">- mapTasks[]</text>
+  <text class="text" x="100" y="290">- mapTasksDone</text>
+  <text class="text" x="100" y="310">- assegna Map</text>
+
+  <rect class="phase" x="320" y="220" width="200" height="100" />
+  <text class="text" x="340" y="250">ReducePhase</text>
+  <text class="text" x="340" y="270">- reduceTasks[]</text>
+  <text class="text" x="340" y="290">- reduceTasksDone</text>
+  <text class="text" x="340" y="310">- assegna Reduce</text>
+
+  <rect class="phase" x="560" y="220" width="200" height="100" />
+  <text class="text" x="580" y="250">DonePhase</text>
+  <text class="text" x="580" y="270">- isDone = true</text>
+  <text class="text" x="580" y="290">- tutti completati</text>
+  <text class="text" x="580" y="310">- job finito</text>
+
+  <line class="phase-arrow" x1="280" y1="270" x2="320" y2="270" />
+  <text class="text" x="290" y="260">tutti Map</text>
+  <text class="text" x="290" y="280">completati</text>
+
+  <line class="phase-arrow" x1="520" y1="270" x2="560" y2="270" />
+  <text class="text" x="530" y="260">tutti Reduce</text>
+  <text class="text" x="530" y="280">completati</text>
+
+  <!-- Task states -->
+  <rect class="state" x="80" y="380" width="150" height="80" />
+  <text class="text" x="100" y="410">Task State</text>
+  <text class="text" x="100" y="430">Idle</text>
+  <text class="text" x="100" y="450">(disponibile)</text>
+
+  <rect class="state" x="280" y="380" width="150" height="80" />
+  <text class="text" x="300" y="410">Task State</text>
+  <text class="text" x="300" y="430">InProgress</text>
+  <text class="text" x="300" y="450">(assegnato)</text>
+
+  <rect class="state" x="480" y="380" width="150" height="80" />
+  <text class="text" x="500" y="410">Task State</text>
+  <text class="text" x="500" y="430">Completed</text>
+  <text class="text" x="500" y="450">(finito)</text>
+
+  <line class="arrow" x1="230" y1="420" x2="280" y2="420" />
+  <text class="text" x="240" y="410">AssignTask</text>
+
+  <line class="arrow" x1="430" y1="420" x2="480" y2="420" />
+  <text class="text" x="440" y="410">TaskCompleted</text>
+
+  <line class="arrow" x1="300" y1="460" x2="100" y2="460" />
+  <text class="text" x="180" y="450">timeout</text>
+
+  <!-- Monitor -->
+  <rect class="state" x="680" y="380" width="200" height="120" />
+  <text class="text" x="700" y="410">Monitor Timeout</text>
+  <text class="text" x="700" y="430">(solo leader)</text>
++  <text class="text" x="700" y="450">ogni 2s controlla</text>
++  <text class="text" x="700" y="470">task InProgress</text>
++  <text class="text" x="700" y="490">durata > 15s</text>
+
++  <line class="arrow" x1="680" y1="440" x2="630" y2="440" />
++  <text class="text" x="640" y="430">reset</text>
+
+</svg>

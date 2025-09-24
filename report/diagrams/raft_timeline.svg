@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520">
+  <defs>
+    <style>
+      .axis { stroke:#aaa; stroke-width:1; }
+      .tick { stroke:#ccc; stroke-width:1; }
+      .title { font:bold 18px sans-serif; fill:#1b1f23; }
+      .text { font:14px sans-serif; fill:#1b1f23; }
+      .leader { fill:#e6f7ff; stroke:#1890ff; stroke-width:2; rx:6; ry:6; }
+      .follower { fill:#f6ffed; stroke:#52c41a; stroke-width:2; rx:6; ry:6; }
+      .candidate { fill:#fff7e6; stroke:#fa8c16; stroke-width:2; rx:6; ry:6; }
+      .arrow { stroke:#333; stroke-width:2; marker-end:url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Timeline di Raft: elezione leader e append entries</text>
+
+  <!-- Time axis -->
+  <line class="axis" x1="100" y1="80" x2="900" y2="80" />
+  <line class="axis" x1="100" y1="200" x2="900" y2="200" />
+  <line class="axis" x1="100" y1="320" x2="900" y2="320" />
+  <text class="text" x="40" y="85">Master0</text>
+  <text class="text" x="40" y="205">Master1</text>
+  <text class="text" x="40" y="325">Master2</text>
+
+  <!-- States for Master0 -->
+  <rect class="candidate" x="120" y="60" width="160" height="40" />
+  <text class="text" x="130" y="85">Pre-vote / Vote</text>
+  <rect class="leader" x="300" y="60" width="560" height="40" />
+  <text class="text" x="310" y="85">Leader</text>
+
+  <!-- States for Master1 -->
+  <rect class="follower" x="120" y="180" width="740" height="40" />
+  <text class="text" x="130" y="205">Follower</text>
+
+  <!-- States for Master2 -->
+  <rect class="follower" x="120" y="300" width="740" height="40" />
+  <text class="text" x="130" y="325">Follower</text>
+
+  <!-- Heartbeats / append entries arrows -->
+  <line class="arrow" x1="340" y1="100" x2="340" y2="180" />
+  <line class="arrow" x1="380" y1="100" x2="380" y2="300" />
+  <line class="arrow" x1="420" y1="100" x2="420" y2="180" />
+  <line class="arrow" x1="460" y1="100" x2="460" y2="300" />
+  <line class="arrow" x1="500" y1="100" x2="500" y2="180" />
+  <line class="arrow" x1="540" y1="100" x2="540" y2="300" />
+
+  <text class="text" x="290" y="140">AppendEntries / Heartbeat</text>
+
+</svg>
+

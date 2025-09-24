@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metrics - MapReduce Dashboard</title>
+    
+    <!-- Bootstrap 5.3 + Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="page-load">
+    <!-- Real-time indicator -->
+    <div class="real-time-indicator">
+        <i class="fas fa-circle"></i> Live Metrics
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-project-diagram"></i> MapReduce Dashboard
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/health">
+                        <i class="fas fa-heartbeat"></i> Health
+                    </a>
+                    <a class="nav-link active" href="/metrics">
+                        <i class="fas fa-chart-line"></i> Metrics
+                    </a>
+                    <a class="nav-link" href="/jobs">
+                        <i class="fas fa-tasks"></i> Jobs
+                    </a>
+                    <a class="nav-link" href="/workers">
+                        <i class="fas fa-server"></i> Workers
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Page Header -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h2><i class="fas fa-chart-line text-primary"></i> System Metrics</h2>
+                        <p class="text-muted">Real-time performance monitoring and analytics</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Key Performance Indicators -->
+        <div class="row mb-4">
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card">
+                    <div class="card-body">
+                        <i class="fas fa-tachometer-alt metric-icon"></i>
+                        <div class="metric-value">{{index .Metrics.performance "cpu_usage"}}</div>
+                        <div class="metric-label">CPU Usage</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card success">
+                    <div class="card-body">
+                        <i class="fas fa-memory metric-icon"></i>
+                        <div class="metric-value">{{index .Metrics.performance "memory_usage"}}</div>
+                        <div class="metric-label">Memory Usage</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card warning">
+                    <div class="card-body">
+                        <i class="fas fa-clock metric-icon"></i>
+                        <div class="metric-value">{{index .Metrics.performance "avg_task_duration"}}</div>
+                        <div class="metric-label">Avg Task Duration</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card danger">
+                    <div class="card-body">
+                        <i class="fas fa-exchange-alt metric-icon"></i>
+                        <div class="metric-value">{{index .Metrics.performance "throughput"}}</div>
+                        <div class="metric-label">Throughput</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row mb-4">
+            <!-- Task Completion Chart -->
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-tasks"></i> Task Completion Over Time</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="taskChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Metrics Chart -->
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie"></i> Task Distribution</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="distributionChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Metrics Tables -->
+        <div class="row mb-4">
+            <!-- Raft State Metrics -->
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-network-wired"></i> Raft State Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Metric</th>
+                                        <th>Value</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><i class="fas fa-crown"></i> Leader</td>
+                                        <td>{{index .Metrics.raft_state "leader"}}</td>
+                                        <td>
+                                            <span class="badge bg-{{if index .Metrics.raft_state "leader"}}success{{else}}secondary{{end}}">
+                                                {{if index .Metrics.raft_state "leader"}}Active{{else}}Inactive{{end}}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-list"></i> Log Size</td>
+                                        <td>{{index .Metrics.raft_state "log_size"}}</td>
+                                        <td><span class="badge bg-info">Normal</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-clock"></i> Term</td>
+                                        <td>{{index .Metrics.raft_state "term"}}</td>
+                                        <td><span class="badge bg-primary">Current</span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Task Statistics -->
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-bar"></i> Task Statistics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Task Type</th>
+                                        <th>Completed</th>
+                                        <th>Failed</th>
+                                        <th>Success Rate</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><i class="fas fa-map"></i> Map Tasks</td>
+                                        <td>{{index .Metrics.tasks_total "map_completed"}}</td>
+                                        <td>{{index .Metrics.tasks_total "map_failed"}}</td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-success" role="progressbar" 
+                                                     style="width: 95%;" aria-valuenow="95" aria-valuemin="0" aria-valuemax="100">
+                                                    95%
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-compress"></i> Reduce Tasks</td>
+                                        <td>{{index .Metrics.tasks_total "reduce_completed"}}</td>
+                                        <td>{{index .Metrics.tasks_total "reduce_failed"}}</td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-success" role="progressbar" 
+                                                     style="width: 92%;" aria-valuenow="92" aria-valuemin="0" aria-valuemax="100">
+                                                    92%
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Real-time Performance Chart -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-area"></i> Real-time Performance</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container" style="height: 400px;">
+                            <canvas id="realtimeChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button -->
+    <div class="floating-action" onclick="refreshMetrics()">
+        <i class="fas fa-sync-alt"></i>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="fas fa-chart-line"></i> Metrics Dashboard</h6>
+                    <p class="mb-0">Real-time performance monitoring</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">
+                        <i class="fas fa-clock"></i> 
+                        Last updated: <span id="lastUpdate">{{.LastUpdate.Format "15:04:05"}}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script>
+        // Task Completion Chart
+        const taskCtx = document.getElementById('taskChart').getContext('2d');
+        const taskChart = new Chart(taskCtx, {
+            type: 'line',
+            data: {
+                labels: ['00:00', '00:05', '00:10', '00:15', '00:20', '00:25', '00:30'],
+                datasets: [{
+                    label: 'Map Tasks',
+                    data: [5, 12, 18, 25, 30, 35, 40],
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }, {
+                    label: 'Reduce Tasks',
+                    data: [2, 8, 15, 22, 28, 32, 38],
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    }
+                }
+            }
+        });
+
+        // Task Distribution Chart
+        const distCtx = document.getElementById('distributionChart').getContext('2d');
+        const distributionChart = new Chart(distCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Map Tasks', 'Reduce Tasks', 'Failed Tasks'],
+                datasets: [{
+                    data: [{{index .Metrics.tasks_total "map_completed"}}, {{index .Metrics.tasks_total "reduce_completed"}}, {{index .Metrics.tasks_total "failed"}}],
+                    backgroundColor: [
+                        '#3498db',
+                        '#27ae60',
+                        '#e74c3c'
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                    }
+                }
+            }
+        });
+
+        // Real-time Performance Chart
+        const realtimeCtx = document.getElementById('realtimeChart').getContext('2d');
+        const realtimeChart = new Chart(realtimeCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'CPU Usage (%)',
+                    data: [],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }, {
+                    label: 'Memory Usage (MB)',
+                    data: [],
+                    borderColor: '#f39c12',
+                    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }, {
+                    label: 'Tasks/Min',
+                    data: [],
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    }
+                }
+            }
+        });
+
+        // Simulate real-time data
+        function updateRealtimeChart() {
+            const now = new Date();
+            const timeLabel = now.toLocaleTimeString();
+            
+            // Add new data point
+            realtimeChart.data.labels.push(timeLabel);
+            realtimeChart.data.datasets[0].data.push(Math.random() * 100);
+            realtimeChart.data.datasets[1].data.push(Math.random() * 200 + 50);
+            realtimeChart.data.datasets[2].data.push(Math.random() * 20 + 5);
+            
+            // Keep only last 20 data points
+            if (realtimeChart.data.labels.length > 20) {
+                realtimeChart.data.labels.shift();
+                realtimeChart.data.datasets.forEach(dataset => {
+                    dataset.data.shift();
+                });
+            }
+            
+            realtimeChart.update('none');
+        }
+
+        // Refresh metrics
+        function refreshMetrics() {
+            const refreshBtn = document.querySelector('.floating-action i');
+            refreshBtn.className = 'fas fa-spinner fa-spin';
+            
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+            
+            setTimeout(() => {
+                refreshBtn.className = 'fas fa-sync-alt';
+                updateRealtimeChart();
+            }, 1000);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Start real-time updates
+            setInterval(updateRealtimeChart, 5000);
+            
+            // Add fade-in animation
+            const elements = document.querySelectorAll('.fade-in');
+            elements.forEach((el, index) => {
+                setTimeout(() => {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+        });
+    </script>
+</body>
+</html>

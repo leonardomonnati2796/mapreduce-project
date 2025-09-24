@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+  <defs>
+    <style>
+      .actor { fill:#e6f7ff; stroke:#1890ff; stroke-width:2; rx:8; ry:8; }
+      .title { font:bold 18px sans-serif; fill:#1b1f23; }
+      .text { font:14px sans-serif; fill:#1b1f23; }
+      .arrow { stroke:#333; stroke-width:2; marker-end:url(#arrowhead); }
+      .rpc-arrow { stroke:#52c41a; stroke-width:2; marker-end:url(#arrowhead); }
+      .raft-arrow { stroke:#1890ff; stroke-width:2; marker-end:url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">Sequenza RPC: AssignTask e TaskCompleted</text>
+
+  <!-- Actors -->
+  <rect class="actor" x="80" y="80" width="120" height="60" />
+  <text class="text" x="100" y="105">Worker</text>
+  <text class="text" x="100" y="125">Polling</text>
+
+  <rect class="actor" x="300" y="80" width="120" height="60" />
+  <text class="text" x="320" y="105">Master</text>
+  <text class="text" x="320" y="125">Leader</text>
+
+  <rect class="actor" x="520" y="80" width="120" height="60" />
+  <text class="text" x="540" y="105">Master</text>
+  <text class="text" x="540" y="125">Follower</text>
+
+  <rect class="actor" x="740" y="80" width="120" height="60" />
+  <text class="text" x="760" y="105">Master</text>
+  <text class="text" x="760" y="125">Follower</text>
+
+  <!-- RPC calls -->
+  <line class="rpc-arrow" x1="200" y1="110" x2="300" y2="110" />
+  <text class="text" x="220" y="100">AssignTask()</text>
+
+  <line class="rpc-arrow" x1="200" y1="200" x2="300" y2="200" />
+  <text class="text" x="220" y="190">TaskCompleted()</text>
+
+  <!-- Raft replication -->
+  <line class="raft-arrow" x1="420" y1="110" x2="520" y2="110" />
+  <line class="raft-arrow" x1="420" y1="130" x2="740" y2="130" />
+  <text class="text" x="450" y="100">Raft Apply</text>
+  <text class="text" x="450" y="120">complete-map</text>
+
+  <line class="raft-arrow" x1="420" y1="200" x2="520" y2="200" />
+  <line class="raft-arrow" x1="420" y1="220" x2="740" y2="220" />
+  <text class="text" x="450" y="190">Raft Apply</text>
+  <text class="text" x="450" y="210">complete-reduce</text>
+
+  <!-- Response -->
+  <line class="rpc-arrow" x1="300" y1="250" x2="200" y2="250" />
+  <text class="text" x="220" y="240">Task{Type, ID, ...}</text>
+
+  <!-- Timeout scenario -->
+  <rect class="actor" x="80" y="350" width="120" height="60" />
+  <text class="text" x="100" y="375">Worker</text>
+  <text class="text" x="100" y="395">Crash</text>
+
+  <rect class="actor" x="300" y="350" width="120" height="60" />
+  <text class="text" x="320" y="375">Master</text>
+  <text class="text" x="320" y="395">Timeout</text>
+
+  <line class="rpc-arrow" x1="200" y1="380" x2="300" y2="380" />
+  <text class="text" x="220" y="370">AssignTask()</text>
+
+  <line class="rpc-arrow" x1="200" y1="470" x2="300" y2="470" />
+  <text class="text" x="220" y="460">AssignTask()</text>
+  <text class="text" x="220" y="480">(riassegnato)</text>
+
+  <!-- Timeout monitor -->
+  <rect class="actor" x="500" y="350" width="200" height="100" />
+  <text class="text" x="520" y="375">Monitor Timeout</text>
+  <text class="text" x="520" y="395">ogni 2s controlla</text>
+  <text class="text" x="520" y="415">task InProgress</text>
+  <text class="text" x="520" y="435">durata > 15s</text>
+
+  <line class="arrow" x1="500" y1="400" x2="420" y2="400" />
+  <text class="text" x="450" y="390">Reset Idle</text>
+
+</svg>

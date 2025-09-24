@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workers - MapReduce Dashboard</title>
+    
+    <!-- Bootstrap 5.3 + Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+</head>
+<body class="page-load">
+    <!-- Real-time indicator -->
+    <div class="real-time-indicator">
+        <i class="fas fa-circle"></i> Worker Monitoring
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-project-diagram"></i> MapReduce Dashboard
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/health">
+                        <i class="fas fa-heartbeat"></i> Health
+                    </a>
+                    <a class="nav-link" href="/metrics">
+                        <i class="fas fa-chart-line"></i> Metrics
+                    </a>
+                    <a class="nav-link" href="/jobs">
+                        <i class="fas fa-tasks"></i> Jobs
+                    </a>
+                    <a class="nav-link active" href="/workers">
+                        <i class="fas fa-server"></i> Workers
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Page Header -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h2><i class="fas fa-server text-success"></i> Worker Management</h2>
+                        <p class="text-muted">Monitor and manage worker nodes</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Worker Statistics -->
+        <div class="row mb-4">
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card">
+                    <div class="card-body">
+                        <i class="fas fa-server metric-icon"></i>
+                        <div class="metric-value">3</div>
+                        <div class="metric-label">Total Workers</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card success">
+                    <div class="card-body">
+                        <i class="fas fa-check-circle metric-icon"></i>
+                        <div class="metric-value">3</div>
+                        <div class="metric-label">Active Workers</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card warning">
+                    <div class="card-body">
+                        <i class="fas fa-exclamation-triangle metric-icon"></i>
+                        <div class="metric-value">1</div>
+                        <div class="metric-label">Degraded Workers</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3 fade-in">
+                <div class="card metric-card danger">
+                    <div class="card-body">
+                        <i class="fas fa-times-circle metric-icon"></i>
+                        <div class="metric-value">0</div>
+                        <div class="metric-label">Failed Workers</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Worker Details -->
+        <div class="row mb-4">
+            {{range .Workers}}
+            <div class="col-lg-4 col-md-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6><i class="fas fa-server"></i> {{.ID}}</h6>
+                            <span class="badge bg-{{if eq .Status "active"}}success{{else}}secondary{{end}}">
+                                {{.Status}}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <strong>Tasks Done:</strong><br>
+                                <span class="badge bg-info fs-6">{{.TasksDone}}</span>
+                            </div>
+                            <div class="col-6">
+                                <strong>Last Seen:</strong><br>
+                                <small class="text-muted">{{.LastSeen.Format "15:04:05"}}</small>
+                            </div>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <div class="progress" style="height: 8px;">
+                                    <div class="progress-bar bg-success" role="progressbar" 
+                                         style="width: 75%;" 
+                                         aria-valuenow="{{.TasksDone}}" aria-valuemin="0" aria-valuemax="20">
+                                    </div>
+                                </div>
+                                <small class="text-muted">Task completion rate</small>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-6">
+                                <button class="btn btn-sm btn-outline-primary w-100" 
+                                        data-action="worker-details" 
+                                        data-id="{{.ID}}">
+                                    <i class="fas fa-eye"></i> Details
+                                </button>
+                            </div>
+                            <div class="col-6">
+                                <button class="btn btn-sm btn-outline-{{if eq .Status "active"}}warning{{else}}success{{end}} w-100"
+                                        data-action="{{if eq .Status "active"}}pause-worker{{else}}resume-worker{{end}}"
+                                        data-id="{{.ID}}">
+                                    <i class="fas fa-{{if eq .Status "active"}}pause{{else}}play{{end}}"></i> 
+                                    {{if eq .Status "active"}}Pause{{else}}Resume{{end}}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Worker Performance -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-line"></i> Worker Performance</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Worker ID</th>
+                                        <th>Status</th>
+                                        <th>Tasks Completed</th>
+                                        <th>Avg Task Time</th>
+                                        <th>CPU Usage</th>
+                                        <th>Memory Usage</th>
+                                        <th>Last Activity</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>worker-1</strong></td>
+                                        <td><span class="badge bg-success">Active</span></td>
+                                        <td><span class="badge bg-info">15</span></td>
+                                        <td>2.3s</td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-success" style="width: 45%">45%</div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-info" style="width: 60%">128MB</div>
+                                            </div>
+                                        </td>
+                                        <td>2 min ago</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary"
+                                                    data-action="worker-details"
+                                                    data-id="worker-1">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>worker-2</strong></td>
+                                        <td><span class="badge bg-success">Active</span></td>
+                                        <td><span class="badge bg-info">12</span></td>
+                                        <td>2.1s</td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-success" style="width: 38%">38%</div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-info" style="width: 55%">115MB</div>
+                                            </div>
+                                        </td>
+                                        <td>1 min ago</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>worker-3</strong></td>
+                                        <td><span class="badge bg-warning">Degraded</span></td>
+                                        <td><span class="badge bg-info">8</span></td>
+                                        <td>3.2s</td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-warning" style="width: 75%">75%</div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar bg-warning" style="width: 85%">180MB</div>
+                                            </div>
+                                        </td>
+                                        <td>5 min ago</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-warning">
+                                                <i class="fas fa-tools"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Worker Health Status -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-heartbeat"></i> Worker Health Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <div class="alert alert-success">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-check-circle fa-2x me-3"></i>
+                                        <div>
+                                            <h6 class="mb-1">Healthy Workers</h6>
+                                            <p class="mb-0">3 workers operating normally</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="alert alert-warning">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-exclamation-triangle fa-2x me-3"></i>
+                                        <div>
+                                            <h6 class="mb-1">Degraded Workers</h6>
+                                            <p class="mb-0">1 worker experiencing issues</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="alert alert-info">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-info-circle fa-2x me-3"></i>
+                                        <div>
+                                            <h6 class="mb-1">Total Capacity</h6>
+                                            <p class="mb-0">4 workers available</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button -->
+    <div class="floating-action" onclick="refreshWorkers()">
+        <i class="fas fa-sync-alt"></i>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="fas fa-server"></i> Worker Dashboard</h6>
+                    <p class="mb-0">Worker monitoring and management</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">
+                        <i class="fas fa-clock"></i> 
+                        Last updated: <span id="lastUpdate">{{.LastUpdate.Format "15:04:05"}}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script>
+        function refreshWorkers() {
+            const refreshBtn = document.querySelector('.floating-action i');
+            refreshBtn.className = 'fas fa-spinner fa-spin';
+            
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+            
+            setTimeout(() => {
+                refreshBtn.className = 'fas fa-sync-alt';
+                location.reload();
+            }, 1000);
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const elements = document.querySelectorAll('.fade-in');
+            elements.forEach((el, index) => {
+                setTimeout(() => {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+        });
+    </script>
+</body>
+</html>
+

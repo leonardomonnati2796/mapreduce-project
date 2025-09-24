@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Checks - MapReduce Dashboard</title>
+    
+    <!-- Bootstrap 5.3 + Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+</head>
+<body class="page-load">
+    <!-- Real-time indicator -->
+    <div class="real-time-indicator">
+        <i class="fas fa-circle"></i> Health Monitoring
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-project-diagram"></i> MapReduce Dashboard
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link active" href="/health">
+                        <i class="fas fa-heartbeat"></i> Health
+                    </a>
+                    <a class="nav-link" href="/metrics">
+                        <i class="fas fa-chart-line"></i> Metrics
+                    </a>
+                    <a class="nav-link" href="/jobs">
+                        <i class="fas fa-tasks"></i> Jobs
+                    </a>
+                    <a class="nav-link" href="/workers">
+                        <i class="fas fa-server"></i> Workers
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Page Header -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h2><i class="fas fa-heartbeat text-success"></i> System Health</h2>
+                        <p class="text-muted">Comprehensive health monitoring and diagnostics</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Overall Health Status -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-clipboard-check"></i> Overall System Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3 text-center">
+                                <div class="status-indicator status-{{.Health.Status}}" style="width: 20px; height: 20px; margin: 0 auto 10px;"></div>
+                                <h4 class="text-capitalize">{{.Health.Status}}</h4>
+                                <p class="text-muted">System Status</p>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <h4>{{.Version}}</h4>
+                                <p class="text-muted">Version</p>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <h4>{{.Uptime}}</h4>
+                                <p class="text-muted">Uptime</p>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <h4>{{.LastUpdate.Format "15:04:05"}}</h4>
+                                <p class="text-muted">Last Check</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Checks Grid -->
+        <div class="row mb-4">
+            {{range $name, $check := .Health.Checks}}
+            <div class="col-lg-4 col-md-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center mb-3">
+                            <span class="status-indicator status-{{$check.Status}}" style="width: 16px; height: 16px;"></span>
+                            <h6 class="mb-0 ms-2 text-capitalize">{{$name}}</h6>
+                        </div>
+                        <p class="text-muted mb-3">{{$check.Message}}</p>
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <small class="text-muted">Duration</small><br>
+                                <strong>{{$check.Duration}}</strong>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Last Check</small><br>
+                                <strong>{{$check.LastChecked.Format "15:04:05"}}</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Detailed Health Information -->
+        <div class="row mb-4">
+            <!-- Master Health -->
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-crown"></i> Master Health</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Component</th>
+                                        <th>Status</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><i class="fas fa-server"></i> Master Process</td>
+                                        <td><span class="badge bg-success">Running</span></td>
+                                        <td>PID: 1234</td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-network-wired"></i> Raft Consensus</td>
+                                        <td><span class="badge bg-success">Active</span></td>
+                                        <td>Leader: master-0</td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-database"></i> State Storage</td>
+                                        <td><span class="badge bg-success">Healthy</span></td>
+                                        <td>Log entries: 1,234</td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-plug"></i> RPC Server</td>
+                                        <td><span class="badge bg-success">Listening</span></td>
+                                        <td>Port: 8000</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Worker Health -->
+            <div class="col-lg-6 mb-3 fade-in">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-server"></i> Worker Health</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Worker</th>
+                                        <th>Status</th>
+                                        <th>Tasks</th>
+                                        <th>Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><i class="fas fa-server"></i> worker-1</td>
+                                        <td><span class="badge bg-success">Active</span></td>
+                                        <td><span class="badge bg-info">15</span></td>
+                                        <td>2 min ago</td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-server"></i> worker-2</td>
+                                        <td><span class="badge bg-success">Active</span></td>
+                                        <td><span class="badge bg-info">12</span></td>
+                                        <td>1 min ago</td>
+                                    </tr>
+                                    <tr>
+                                        <td><i class="fas fa-server"></i> worker-3</td>
+                                        <td><span class="badge bg-warning">Degraded</span></td>
+                                        <td><span class="badge bg-info">8</span></td>
+                                        <td>5 min ago</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Network Health -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-network-wired"></i> Network Health</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3 mb-3">
+                                <div class="text-center">
+                                    <i class="fas fa-wifi text-success fa-2x mb-2"></i>
+                                    <h6>Master-Master</h6>
+                                    <span class="badge bg-success">Connected</span>
+                                    <small class="d-block text-muted mt-1">Latency: 2ms</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <div class="text-center">
+                                    <i class="fas fa-wifi text-success fa-2x mb-2"></i>
+                                    <h6>Master-Worker</h6>
+                                    <span class="badge bg-success">Connected</span>
+                                    <small class="d-block text-muted mt-1">Latency: 5ms</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <div class="text-center">
+                                    <i class="fas fa-hdd text-success fa-2x mb-2"></i>
+                                    <h6>Storage</h6>
+                                    <span class="badge bg-success">Available</span>
+                                    <small class="d-block text-muted mt-1">Free: 2.1GB</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <div class="text-center">
+                                    <i class="fas fa-memory text-success fa-2x mb-2"></i>
+                                    <h6>Memory</h6>
+                                    <span class="badge bg-success">Healthy</span>
+                                    <small class="d-block text-muted mt-1">Usage: 45%</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health History -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-history"></i> Health History</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Component</th>
+                                        <th>Status</th>
+                                        <th>Message</th>
+                                        <th>Duration</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>2025-09-22 16:45:30</td>
+                                        <td>Master</td>
+                                        <td><span class="badge bg-success">Healthy</span></td>
+                                        <td>All systems operational</td>
+                                        <td>1.2ms</td>
+                                    </tr>
+                                    <tr>
+                                        <td>2025-09-22 16:45:25</td>
+                                        <td>Worker</td>
+                                        <td><span class="badge bg-success">Healthy</span></td>
+                                        <td>Processing tasks normally</td>
+                                        <td>0.8ms</td>
+                                    </tr>
+                                    <tr>
+                                        <td>2025-09-22 16:45:20</td>
+                                        <td>Raft</td>
+                                        <td><span class="badge bg-success">Healthy</span></td>
+                                        <td>Consensus active</td>
+                                        <td>0.5ms</td>
+                                    </tr>
+                                    <tr>
+                                        <td>2025-09-22 16:45:15</td>
+                                        <td>Storage</td>
+                                        <td><span class="badge bg-success">Healthy</span></td>
+                                        <td>Read/write operations normal</td>
+                                        <td>2.1ms</td>
+                                    </tr>
+                                    <tr>
+                                        <td>2025-09-22 16:45:10</td>
+                                        <td>Network</td>
+                                        <td><span class="badge bg-success">Healthy</span></td>
+                                        <td>All connections stable</td>
+                                        <td>0.3ms</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button -->
+    <div class="floating-action" onclick="refreshHealth()">
+        <i class="fas fa-sync-alt"></i>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="fas fa-heartbeat"></i> Health Dashboard</h6>
+                    <p class="mb-0">System health monitoring and diagnostics</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">
+                        <i class="fas fa-clock"></i> 
+                        Last updated: <span id="lastUpdate">{{.LastUpdate.Format "15:04:05"}}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script>
+        // Refresh health data
+        function refreshHealth() {
+            const refreshBtn = document.querySelector('.floating-action i');
+            refreshBtn.className = 'fas fa-spinner fa-spin';
+            
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+            
+            setTimeout(() => {
+                refreshBtn.className = 'fas fa-sync-alt';
+                location.reload();
+            }, 1000);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add fade-in animation
+            const elements = document.querySelectorAll('.fade-in');
+            elements.forEach((el, index) => {
+                setTimeout(() => {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                refreshHealth();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,112 @@
+# MapReduce Cluster con Fault Tolerance
+# Utilizza variabili d'ambiente per configurazione centralizzata
+
+# Variabili di configurazione (possono essere sovrascritte con file .env)
+x-common-vars: &common-vars
+  RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234"
+  RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+  TMP_PATH: "/tmp/mapreduce"
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  MAPREDUCE_MASTER_TASK_TIMEOUT: "120s"
+  MAPREDUCE_MASTER_HEARTBEAT_INTERVAL: "5s"
+  MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+
+# Configurazione comune per i master
+x-master-config: &master-config
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.simple
+  networks:
+    - mapreduce-net
+  volumes:
+    - intermediate-data:/tmp/mapreduce
+    - ./data:/root/data:ro
+  environment:
+    <<: *common-vars
+    # - RAFT_CLEAN_START: "true"  # Uncomment per pulire i dati Raft (solo per debug)
+  restart: unless-stopped
+  stop_grace_period: 30s
+
+# Configurazione comune per i worker
+x-worker-config: &worker-config
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.simple
+  command: ["./mapreduce", "worker"]
+  depends_on: ["master0", "master1", "master2"]
+  networks:
+    - mapreduce-net
+  volumes:
+    - intermediate-data:/tmp/mapreduce
+    - ./data:/root/data:ro
+  environment:
+    RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+    TMP_PATH: "/tmp/mapreduce"
+    MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+    MAPREDUCE_WORKER_MAX_RETRIES: "10"
+  restart: unless-stopped
+  stop_grace_period: 30s
+
+# File di input centralizzato
+x-input-file: &input-file "/root/data/Words.txt"
+
+services:
+  master0:
+    <<: *master-config
+    hostname: master0
+    command: ["./mapreduce", "master", "0", *input-file]
+    ports:
+      - "1234:1234" # Raft
+      - "8000:8000" # RPC
+      - "9090:9090" # Metrics
+
+  master1:
+    <<: *master-config
+    hostname: master1
+    command: ["./mapreduce", "master", "1", *input-file]
+    ports:
+      - "1235:1234"
+      - "8001:8001"
+
+  master2:
+    <<: *master-config
+    hostname: master2
+    command: ["./mapreduce", "master", "2", *input-file]
+    ports:
+      - "1236:1234"
+      - "8002:8002"
+
+  worker1:
+    <<: *worker-config
+
+  worker2:
+    <<: *worker-config
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["./mapreduce", "dashboard", "--port", "8080"]
+    depends_on: ["master0", "master1", "master2"]
+    networks:
+      - mapreduce-net
+    ports:
+      - "8080:8080"
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ./data:/root/data:ro
+      - ./web:/root/web:ro
+    environment:
+      RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+      TMP_PATH: "/tmp/mapreduce"
+      METRICS_ENABLED: "true"
+      METRICS_PORT: "9090"
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+networks:
+  mapreduce-net:
+
+volumes:
+  intermediate-data:

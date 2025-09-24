@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Output - MapReduce Dashboard</title>
+    
+    <!-- Bootstrap 5.3 + Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+    <style>
+        .output-container {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #333;
+        }
+        .word-frequency {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 8px;
+            border-bottom: 1px solid #333;
+        }
+        .word-frequency:hover {
+            background-color: #2d2d2d;
+        }
+        .word {
+            color: #569cd6;
+            font-weight: bold;
+        }
+        .frequency {
+            color: #ce9178;
+        }
+        .file-info {
+            background-color: #0d6efd;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body class="page-load">
+    <!-- Real-time indicator -->
+    <div class="real-time-indicator">
+        <i class="fas fa-circle"></i> Live Output
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-project-diagram"></i> MapReduce Dashboard
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/health">
+                        <i class="fas fa-heartbeat"></i> Health
+                    </a>
+                    <a class="nav-link" href="/metrics">
+                        <i class="fas fa-chart-line"></i> Metrics
+                    </a>
+                    <a class="nav-link" href="/jobs">
+                        <i class="fas fa-tasks"></i> Jobs
+                    </a>
+                    <a class="nav-link" href="/workers">
+                        <i class="fas fa-server"></i> Workers
+                    </a>
+                    <a class="nav-link active" href="/output">
+                        <i class="fas fa-file-alt"></i> Output
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Page Header -->
+        <div class="row mb-4 fade-in">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body text-center">
+                        <h2><i class="fas fa-file-alt text-primary"></i> Job Output - 50words.txt</h2>
+                        <p class="text-muted">Risultati del conteggio delle parole processato dal cluster MapReduce</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Output Information -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="file-info">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <i class="fas fa-file"></i> <strong>File di Input:</strong> 50words.txt
+                        </div>
+                        <div class="col-md-4">
+                            <i class="fas fa-server"></i> <strong>Cluster:</strong> 3 Master + 2 Worker
+                        </div>
+                        <div class="col-md-4">
+                            <i class="fas fa-clock"></i> <strong>Ultimo Aggiornamento:</strong> <span id="lastUpdate">{{.LastUpdate.Format "15:04:05"}}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Output Statistics -->
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-file-alt fa-2x text-primary mb-2"></i>
+                        <h5 id="totalFiles">-</h5>
+                        <small>File di Output</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-list fa-2x text-success mb-2"></i>
+                        <h5 id="totalWords">-</h5>
+                        <small>Parole Uniche</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-chart-bar fa-2x text-warning mb-2"></i>
+                        <h5 id="maxFrequency">-</h5>
+                        <small>Freq. Massima</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-weight-hanging fa-2x text-info mb-2"></i>
+                        <h5 id="totalOccurrences">-</h5>
+                        <small>Occorrenze Totali</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Output Content -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5><i class="fas fa-list-alt"></i> Frequenza delle Parole</h5>
+                            <div>
+                                <button class="btn btn-sm btn-outline-primary" onclick="downloadOutput()">
+                                    <i class="fas fa-download"></i> Download
+                                </button>
+                                <button class="btn btn-sm btn-outline-success" onclick="refreshOutput()">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="outputContainer" class="output-container">
+                            <div class="text-center">
+                                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                <p>Caricamento output...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Expected Output Reference -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-check-circle text-success"></i> Output Atteso</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>Il file <code>50words.txt</code> dovrebbe produrre un output con le seguenti frequenze delle parole:</p>
+                        <div class="alert alert-info">
+                            <strong>Formato atteso:</strong> (parola, frequenza)<br>
+                            <strong>Parole principali:</strong> di(6), per(3), elaborazione(2), fase(2), La(2), l(2), è(2), chiave(2), dati(2), coppie(2), modello(2)
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Refresh Button -->
+    <button class="btn btn-primary btn-lg refresh-btn" onclick="refreshOutput()" title="Aggiorna Output">
+        <i class="fas fa-sync-alt"></i>
+    </button>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="fas fa-file-alt"></i> Output Dashboard</h6>
+                    <p class="mb-0">Visualizzazione risultati MapReduce</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <p class="mb-0">
+                        <i class="fas fa-clock"></i> 
+                        Last updated: <span id="footerLastUpdate">{{.LastUpdate.Format "15:04:05"}}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script>
+        let outputData = null;
+
+        async function loadOutput() {
+            try {
+                const response = await fetch('/api/v1/output');
+                const data = await response.json();
+                
+                if (data.success) {
+                    outputData = data;
+                    displayOutput(data);
+                    updateStatistics(data);
+                } else {
+                    document.getElementById('outputContainer').innerHTML = 
+                        '<div class="text-danger"><i class="fas fa-exclamation-triangle"></i> Errore nel caricamento: ' + data.error + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('outputContainer').innerHTML = 
+                    '<div class="text-danger"><i class="fas fa-exclamation-triangle"></i> Errore di connessione: ' + error.message + '</div>';
+            }
+        }
+
+        function displayOutput(data) {
+            const container = document.getElementById('outputContainer');
+            
+            if (!data.output || data.output.trim() === '') {
+                container.innerHTML = '<div class="text-warning"><i class="fas fa-info-circle"></i> Nessun output disponibile</div>';
+                return;
+            }
+
+            const lines = data.output.split('\n').filter(line => line.trim() !== '');
+            const outputHtml = lines.map(line => {
+                const parts = line.trim().split(' ');
+                if (parts.length >= 2) {
+                    const word = parts.slice(0, -1).join(' ');
+                    const frequency = parts[parts.length - 1];
+                    return `<div class="word-frequency">
+                        <span class="word">${word}</span>
+                        <span class="frequency">${frequency}</span>
+                    </div>`;
+                }
+                return `<div class="word-frequency"><span class="text-muted">${line}</span></div>`;
+            }).join('');
+
+            container.innerHTML = outputHtml || '<div class="text-muted">Nessun dato da visualizzare</div>';
+        }
+
+        function updateStatistics(data) {
+            if (!data.output) return;
+
+            const lines = data.output.split('\n').filter(line => line.trim() !== '');
+            const wordCounts = {};
+            let totalOccurrences = 0;
+            let maxFrequency = 0;
+
+            lines.forEach(line => {
+                const parts = line.trim().split(' ');
+                if (parts.length >= 2) {
+                    const frequency = parseInt(parts[parts.length - 1]);
+                    if (!isNaN(frequency)) {
+                        totalOccurrences += frequency;
+                        maxFrequency = Math.max(maxFrequency, frequency);
+                        wordCounts[parts.slice(0, -1).join(' ')] = frequency;
+                    }
+                }
+            });
+
+            document.getElementById('totalFiles').textContent = data.files ? data.files.length : '-';
+            document.getElementById('totalWords').textContent = Object.keys(wordCounts).length;
+            document.getElementById('maxFrequency').textContent = maxFrequency;
+            document.getElementById('totalOccurrences').textContent = totalOccurrences;
+
+            // Update timestamps
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+            document.getElementById('footerLastUpdate').textContent = now.toLocaleTimeString();
+        }
+
+        function refreshOutput() {
+            const refreshBtn = document.querySelector('.refresh-btn i');
+            refreshBtn.className = 'fas fa-spinner fa-spin';
+            
+            loadOutput().finally(() => {
+                refreshBtn.className = 'fas fa-sync-alt';
+            });
+        }
+
+        function downloadOutput() {
+            if (!outputData || !outputData.output) {
+                alert('Nessun output disponibile per il download');
+                return;
+            }
+
+            const blob = new Blob([outputData.output], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'mapreduce-output-50words.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshOutput, 30000);
+
+        // Load output on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadOutput();
+            
+            // Fade in animation
+            const elements = document.querySelectorAll('.fade-in');
+            elements.forEach((el, index) => {
+                setTimeout(() => {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
+                }, index * 100);
+            });
+        });
+    </script>
+</body>
+</html>

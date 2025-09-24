@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Local Text Processing</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Test Local Text Processing MapReduce</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id="testForm">
+                            <div class="mb-3">
+                                <label for="testText" class="form-label">Test Text:</label>
+                                <textarea class="form-control" id="testText" rows="5" 
+                                          placeholder="Inserisci del testo da processare...">Hello world hello test world hello mapreduce test world hello</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="nReduce" class="form-label">Numero Reduce Tasks:</label>
+                                <input type="number" class="form-control" id="nReduce" value="3" min="1" max="10">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Test Processing</button>
+                        </form>
+                        
+                        <div id="results" class="mt-4" style="display: none;">
+                            <h5>Results:</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6>Combined Output:</h6>
+                                    <pre id="combinedOutput" class="bg-light p-3 rounded" style="max-height: 200px; overflow-y: auto;"></pre>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>Individual Files:</h6>
+                                    <div id="individualFiles"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function processTextLocally(text, nReduce) {
+            // Normalize text: lowercase, remove punctuation
+            const words = text.toLowerCase()
+                .replace(/[.,!?;:"'()\[\]{}]/g, ' ')
+                .split(/\s+/)
+                .filter(word => word.length > 0);
+            
+            // Count words
+            const wordCount = {};
+            words.forEach(word => {
+                wordCount[word] = (wordCount[word] || 0) + 1;
+            });
+            
+            // Distribute words among reduce tasks using hash
+            const reduceTasks = Array.from({length: nReduce}, () => []);
+            
+            Object.keys(wordCount).forEach(word => {
+                const hash = word.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                const taskIndex = hash % nReduce;
+                reduceTasks[taskIndex].push(`${word} ${wordCount[word]}`);
+            });
+            
+            // Sort each reduce task
+            reduceTasks.forEach(task => task.sort());
+            
+            // Create results
+            const results = [];
+            let combinedOutput = '';
+            
+            reduceTasks.forEach((task, index) => {
+                const content = task.join('\n');
+                if (content.trim()) {
+                    results.push({
+                        file: `mr-out-${index}`,
+                        lines: task.length,
+                        size: `${(content.length / 1024).toFixed(1)}KB`,
+                        content: content
+                    });
+                    
+                    if (combinedOutput) combinedOutput += '\n';
+                    combinedOutput += content;
+                }
+            });
+            
+            return {
+                success: true,
+                job_id: `text-job-${Date.now()}`,
+                status: 'completed',
+                results: results,
+                combined_output: combinedOutput,
+                timestamp: new Date().toISOString()
+            };
+        }
+
+        document.getElementById('testForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const text = document.getElementById('testText').value;
+            const nReduce = document.getElementById('nReduce').value;
+            const results = document.getElementById('results');
+            const combinedOutput = document.getElementById('combinedOutput');
+            const individualFiles = document.getElementById('individualFiles');
+            
+            try {
+                const result = processTextLocally(text, parseInt(nReduce));
+                
+                // Display combined output
+                combinedOutput.textContent = result.combined_output;
+                
+                // Display individual files
+                individualFiles.innerHTML = '';
+                result.results.forEach(file => {
+                    const div = document.createElement('div');
+                    div.className = 'mb-2';
+                    div.innerHTML = `
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-file"></i> ${file.file}
+                                    <span class="badge bg-info ms-2">${file.lines} lines</span>
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <pre class="small" style="max-height: 100px; overflow-y: auto;">${file.content}</pre>
+                            </div>
+                        </div>
+                    `;
+                    individualFiles.appendChild(div);
+                });
+                
+                results.style.display = 'block';
+                
+                console.log('Processing result:', result);
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error: ' + error.message);
+            }
+        });
+    </script>
+</body>
+</html>
