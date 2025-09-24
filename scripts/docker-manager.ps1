@@ -1,5 +1,5 @@
-# Script PowerShell per la gestione completa del cluster Docker MapReduce
-# Versione pulita senza caratteri problematici
+# Script PowerShell unificato per la gestione del cluster Docker MapReduce
+# Combina semplicità e funzionalità avanzate
 
 param(
     [Parameter(Position=0)]
@@ -19,15 +19,7 @@ param(
     [switch]$Backup,
     [switch]$Recover,
     [switch]$CopyOutput,
-    [switch]$Help,
-    
-    [switch]$AddMaster,
-    [switch]$AddWorker,
-    [switch]$ResetToDefault,
-    [int]$NewMasterID = -1,
-    [int]$NewWorkerID = -1,
-    [string]$MasterRaftPort = "",
-    [string]$MasterRpcPort = ""
+    [switch]$Help
 )
 
 function Write-ColorOutput {
@@ -36,27 +28,25 @@ function Write-ColorOutput {
 }
 
 function Show-Help {
-    Write-ColorOutput "=== MapReduce Docker Manager ===" "Blue"
+    Write-ColorOutput "=== MapReduce Docker Manager ===" "Cyan"
     Write-Host ""
-    Write-Host "Usage: .\scripts\docker-manager.ps1 [ACTION] [OPTIONS]"
+    Write-Host "Usage: .\scripts\docker-manager.ps1 [ACTION]"
     Write-Host ""
     Write-Host "Actions:"
-    Write-Host "  start       Avvia il cluster MapReduce (default)"
-    Write-Host "  stop        Ferma tutti i container"
-    Write-Host "  restart     Riavvia il cluster"
-    Write-Host "  status      Mostra lo stato del cluster"
-    Write-Host "  logs        Mostra i log dei container"
-    Write-Host "  health      Controlla la salute del cluster"
-    Write-Host "  scale       Scala il cluster"
-    Write-Host "  backup      Crea backup dei dati"
-    Write-Host "  recover     Ripristina da backup"
-    Write-Host "  copy-output Copia file di output dai container"
+    Write-Host "  start       - Avvia il cluster MapReduce"
+    Write-Host "  stop        - Ferma tutti i container"
+    Write-Host "  restart     - Riavvia il cluster"
+    Write-Host "  status      - Mostra lo stato del cluster"
+    Write-Host "  logs        - Mostra i log dei container"
+    Write-Host "  health      - Controlla la salute del cluster"
+    Write-Host "  clean       - Pulisce tutto"
+    Write-Host "  dashboard   - Apre il dashboard nel browser"
+    Write-Host "  backup      - Crea backup dei dati"
+    Write-Host "  copy-output - Copia file di output dai container"
     Write-Host ""
     Write-Host "Options:"
     Write-Host "  -Clean          Pulisce tutti i container e volumi esistenti"
     Write-Host "  -Build          Ricostruisce le immagini Docker"
-    Write-Host "  -Workers <num>  Numero di worker (default: 2)"
-    Write-Host "  -Masters <num>  Numero di master (default: 3)"
     Write-Host "  -FaultTest      Testa la fault tolerance del cluster"
     Write-Host "  -CopyOutput     Copia file di output dai container alla cartella locale"
     Write-Host "  -Help           Mostra questo messaggio di aiuto"
@@ -363,36 +353,17 @@ function Copy-OutputFiles {
     return $true
 }
 
-function Remove-Environment {
-    Write-ColorOutput "=== PULIZIA AMBIENTE DOCKER ===" "Yellow"
-    Write-Host ""
+function Clean-All {
+    Write-ColorOutput "=== PULIZIA COMPLETA ===" "Yellow"
     
-    Write-Host "Fermando container esistenti..."
+    Write-Host "Fermando e rimuovendo container..."
     docker-compose -f docker/docker-compose.yml down --volumes --remove-orphans
     
-    Write-Host "Rimuovendo immagini esistenti..."
-    $projectName = Split-Path (Get-Location) -Leaf
-    if ($projectName -eq "") {
-        $projectName = "mapreduce-project"
-    }
+    Write-Host "Pulendo immagini..."
+    docker image prune -f
     
-    docker images --format "table {{.Repository}}:{{.Tag}}" | Where-Object { $_ -match "^${projectName}_" } | ForEach-Object {
-        $imageName = ($_ -split '\s+')[0]
-        if ($imageName -and $imageName -ne "REPOSITORY") {
-            docker rmi $imageName -f 2>$null
-        }
-    }
-    
-    Write-Host "Pulendo volumi non utilizzati..."
+    Write-Host "Pulendo volumi..."
     docker volume prune -f
-    
-    Write-Host "Pulendo cache di build..."
-    docker builder prune -f
-    
-    if (Test-Path "docker-compose.yml.backup") {
-        Remove-Item "docker-compose.yml.backup" -Force
-        Write-Host "File di backup rimossi"
-    }
     
     Write-ColorOutput "Pulizia completata" "Green"
 }
@@ -428,7 +399,7 @@ if (-not (Test-DockerRunning)) {
 switch ($Action.ToLower()) {
     "start" {
         if ($Clean) {
-            Remove-Environment
+            Clean-All
         }
         
         if ($Build -or $Clean) {
@@ -459,7 +430,7 @@ switch ($Action.ToLower()) {
             Write-Host "  - Master2 RPC: localhost:8002"
             Write-Host ""
         } else {
-            Write-ColorOutput "Errore durante l avvio del cluster" "Red"
+            Write-ColorOutput "Errore durante l'avvio del cluster" "Red"
             exit 1
         }
     }
@@ -468,7 +439,7 @@ switch ($Action.ToLower()) {
     }
     "restart" {
         Stop-Cluster
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 3
         Start-Cluster
     }
     "status" {
@@ -484,17 +455,16 @@ switch ($Action.ToLower()) {
             Test-FaultTolerance
         }
     }
-    "scale" {
-        Write-ColorOutput "Scaling cluster a $Masters master e $Workers worker..." "Yellow"
-        Stop-Cluster
-        Start-Sleep -Seconds 5
-        Start-Cluster
+    "clean" {
+        Clean-All
+    }
+    "dashboard" {
+        Write-ColorOutput "=== APERTURA DASHBOARD ===" "Blue"
+        Write-Host ""
+        & "$PSScriptRoot/open-dashboard.ps1" -Quick
     }
     "backup" {
         Backup-Data
-    }
-    "recover" {
-        Write-ColorOutput "Funzionalita di recovery non ancora implementata" "Yellow"
     }
     "copy-output" {
         if (Copy-OutputFiles) {
@@ -506,7 +476,6 @@ switch ($Action.ToLower()) {
     }
     default {
         Write-ColorOutput "Azione non riconosciuta: $Action" "Red"
-        Write-Host ""
         Show-Help
         exit 1
     }

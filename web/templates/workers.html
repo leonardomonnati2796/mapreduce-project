@@ -63,7 +63,7 @@
                 <div class="card metric-card">
                     <div class="card-body">
                         <i class="fas fa-server metric-icon"></i>
-                        <div class="metric-value">3</div>
+                        <div class="metric-value">{{len .Workers}}</div>
                         <div class="metric-label">Total Workers</div>
                     </div>
                 </div>
@@ -72,7 +72,7 @@
                 <div class="card metric-card success">
                     <div class="card-body">
                         <i class="fas fa-check-circle metric-icon"></i>
-                        <div class="metric-value">3</div>
+                        <div class="metric-value">{{$active := 0}}{{range .Workers}}{{if eq .Status "active"}}{{$active = add $active 1}}{{end}}{{end}}{{$active}}</div>
                         <div class="metric-label">Active Workers</div>
                     </div>
                 </div>
@@ -81,7 +81,7 @@
                 <div class="card metric-card warning">
                     <div class="card-body">
                         <i class="fas fa-exclamation-triangle metric-icon"></i>
-                        <div class="metric-value">1</div>
+                        <div class="metric-value">{{$degraded := 0}}{{range .Workers}}{{if eq .Status "degraded"}}{{$degraded = add $degraded 1}}{{end}}{{end}}{{$degraded}}</div>
                         <div class="metric-label">Degraded Workers</div>
                     </div>
                 </div>
@@ -90,7 +90,7 @@
                 <div class="card metric-card danger">
                     <div class="card-body">
                         <i class="fas fa-times-circle metric-icon"></i>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value">{{$failed := 0}}{{range .Workers}}{{if eq .Status "failed"}}{{$failed = add $failed 1}}{{end}}{{end}}{{$failed}}</div>
                         <div class="metric-label">Failed Workers</div>
                     </div>
                 </div>
@@ -172,82 +172,30 @@
                                         <th>Worker ID</th>
                                         <th>Status</th>
                                         <th>Tasks Completed</th>
-                                        <th>Avg Task Time</th>
-                                        <th>CPU Usage</th>
-                                        <th>Memory Usage</th>
                                         <th>Last Activity</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody id="workersTableBody">
+                                    {{range .Workers}}
                                     <tr>
-                                        <td><strong>worker-1</strong></td>
-                                        <td><span class="badge bg-success">Active</span></td>
-                                        <td><span class="badge bg-info">15</span></td>
-                                        <td>2.3s</td>
+                                        <td><strong>{{.ID}}</strong></td>
                                         <td>
-                                            <div class="progress" style="height: 20px;">
-                                                <div class="progress-bar bg-success" style="width: 45%">45%</div>
-                                            </div>
+                                            <span class="badge bg-{{if eq .Status "active"}}success{{else if eq .Status "degraded"}}warning{{else}}secondary{{end}}">
+                                                {{.Status}}
+                                            </span>
                                         </td>
-                                        <td>
-                                            <div class="progress" style="height: 20px;">
-                                                <div class="progress-bar bg-info" style="width: 60%">128MB</div>
-                                            </div>
-                                        </td>
-                                        <td>2 min ago</td>
+                                        <td><span class="badge bg-info">{{.TasksDone}}</span></td>
+                                        <td>{{.LastSeen.Format "15:04:05"}}</td>
                                         <td>
                                             <button class="btn btn-sm btn-outline-primary"
                                                     data-action="worker-details"
-                                                    data-id="worker-1">
+                                                    data-id="{{.ID}}">
                                                 <i class="fas fa-eye"></i>
                                             </button>
                                         </td>
                                     </tr>
-                                    <tr>
-                                        <td><strong>worker-2</strong></td>
-                                        <td><span class="badge bg-success">Active</span></td>
-                                        <td><span class="badge bg-info">12</span></td>
-                                        <td>2.1s</td>
-                                        <td>
-                                            <div class="progress" style="height: 20px;">
-                                                <div class="progress-bar bg-success" style="width: 38%">38%</div>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div class="progress" style="height: 20px;">
-                                                <div class="progress-bar bg-info" style="width: 55%">115MB</div>
-                                            </div>
-                                        </td>
-                                        <td>1 min ago</td>
-                                        <td>
-                                            <button class="btn btn-sm btn-outline-primary">
-                                                <i class="fas fa-eye"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td><strong>worker-3</strong></td>
-                                        <td><span class="badge bg-warning">Degraded</span></td>
-                                        <td><span class="badge bg-info">8</span></td>
-                                        <td>3.2s</td>
-                                        <td>
-                                            <div class="progress" style="height: 20px;">
-                                                <div class="progress-bar bg-warning" style="width: 75%">75%</div>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div class="progress" style="height: 20px;">
-                                                <div class="progress-bar bg-warning" style="width: 85%">180MB</div>
-                                            </div>
-                                        </td>
-                                        <td>5 min ago</td>
-                                        <td>
-                                            <button class="btn btn-sm btn-outline-warning">
-                                                <i class="fas fa-tools"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
+                                    {{end}}
                                 </tbody>
                             </table>
                         </div>
@@ -271,7 +219,7 @@
                                         <i class="fas fa-check-circle fa-2x me-3"></i>
                                         <div>
                                             <h6 class="mb-1">Healthy Workers</h6>
-                                            <p class="mb-0">3 workers operating normally</p>
+                                            <p class="mb-0">{{$active := 0}}{{range .Workers}}{{if eq .Status "active"}}{{$active = add $active 1}}{{end}}{{end}}{{$active}} workers operating normally</p>
                                         </div>
                                     </div>
                                 </div>
@@ -282,7 +230,7 @@
                                         <i class="fas fa-exclamation-triangle fa-2x me-3"></i>
                                         <div>
                                             <h6 class="mb-1">Degraded Workers</h6>
-                                            <p class="mb-0">1 worker experiencing issues</p>
+                                            <p class="mb-0">{{$degraded := 0}}{{range .Workers}}{{if eq .Status "degraded"}}{{$degraded = add $degraded 1}}{{end}}{{end}}{{$degraded}} worker experiencing issues</p>
                                         </div>
                                     </div>
                                 </div>
@@ -293,7 +241,7 @@
                                         <i class="fas fa-info-circle fa-2x me-3"></i>
                                         <div>
                                             <h6 class="mb-1">Total Capacity</h6>
-                                            <p class="mb-0">4 workers available</p>
+                                            <p class="mb-0">{{len .Workers}} workers available</p>
                                         </div>
                                     </div>
                                 </div>

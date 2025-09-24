@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // Variabile globale per la configurazione
@@ -20,6 +22,11 @@ func InitConfig(configPath string) error {
 }
 
 func getMasterRaftAddresses() []string {
+	// Prima controlla se ci sono indirizzi Raft nelle variabili d'ambiente (per Docker)
+	if raftAddrs := os.Getenv("RAFT_ADDRESSES"); raftAddrs != "" {
+		return strings.Split(raftAddrs, ",")
+	}
+
 	if globalConfig != nil {
 		return globalConfig.GetRaftAddresses()
 	}
@@ -28,6 +35,11 @@ func getMasterRaftAddresses() []string {
 }
 
 func getMasterRpcAddresses() []string {
+	// Prima controlla se ci sono indirizzi RPC nelle variabili d'ambiente (per Docker)
+	if rpcAddrs := os.Getenv("RPC_ADDRESSES"); rpcAddrs != "" {
+		return strings.Split(rpcAddrs, ",")
+	}
+
 	if globalConfig != nil {
 		return globalConfig.GetRPCAddresses()
 	}
@@ -57,6 +69,40 @@ type TaskCompletedArgs struct {
 	Type   TaskType
 }
 type Reply struct{}
+
+// Strutture per ottenere informazioni sui master
+type GetMasterInfoArgs struct{}
+type MasterInfoReply struct {
+	MyID           int       `json:"my_id"`
+	RaftState      string    `json:"raft_state"`
+	IsLeader       bool      `json:"is_leader"`
+	LeaderAddress  string    `json:"leader_address"`
+	ClusterMembers []int     `json:"cluster_members"`
+	RaftAddrs      []string  `json:"raft_addrs"`
+	RpcAddrs       []string  `json:"rpc_addrs"`
+	LastSeen       time.Time `json:"last_seen"`
+}
+
+// Strutture per ottenere informazioni sui worker
+type GetWorkerInfoArgs struct{}
+type WorkerInfoReply struct {
+	Workers  []WorkerInfo `json:"workers"`
+	LastSeen time.Time    `json:"last_seen"`
+}
+
+type WorkerInfo struct {
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	LastSeen  time.Time `json:"last_seen"`
+	TasksDone int       `json:"tasks_done"`
+}
+
+// Strutture per il trasferimento della leadership
+type LeadershipTransferArgs struct{}
+type LeadershipTransferReply struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
 
 func getIntermediateFileName(mapTaskID, reduceTaskID int) string {
 	basePath := os.Getenv("TMP_PATH")

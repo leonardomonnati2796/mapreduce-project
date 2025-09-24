@@ -45,13 +45,7 @@ type CheckResult struct {
 	LastChecked time.Time     `json:"last_checked"`
 }
 
-// WorkerInfo contiene informazioni sul worker per health checks
-type WorkerInfo struct {
-	ID        string
-	Status    string
-	LastSeen  time.Time
-	TasksDone int
-}
+// WorkerInfo è definito in rpc.go
 
 // HealthChecker gestisce i controlli di salute del sistema
 type HealthChecker struct {

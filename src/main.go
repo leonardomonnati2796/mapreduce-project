@@ -17,9 +17,6 @@ const (
 	tickerInterval         = 2 * time.Second
 	leaderElectionDelay    = 2 * time.Second
 	nReduce                = 10
-	// Exit codes
-	exitSuccess = 0
-	exitError   = 1
 	// Minimum arguments required
 	minMasterArgs = 4
 	minWorkerArgs = 2
@@ -123,12 +120,24 @@ func runMaster() {
 // runWorker avvia il processo worker
 // Il worker si connette ai master e esegue i task Map e Reduce assegnati
 func runWorker() {
+	// Inizializza la configurazione globale per leggere le variabili d'ambiente
+	configPath := os.Getenv("MAPREDUCE_CONFIG")
+	if err := InitConfig(configPath); err != nil {
+		fmt.Printf("Warning: Failed to load config: %v, using defaults\n", err)
+	}
+
 	fmt.Println("Avvio come worker...")
 	Worker(Map, Reduce)
 }
 
 // runDashboard avvia il dashboard web
 func runDashboard() {
+	// Inizializza la configurazione globale per leggere le variabili d'ambiente
+	configPath := os.Getenv("MAPREDUCE_CONFIG")
+	if err := InitConfig(configPath); err != nil {
+		fmt.Printf("Warning: Failed to load config: %v, using defaults\n", err)
+	}
+
 	// Ottieni la configurazione globale o usa quella di default
 	config := GetConfig()
 	if config == nil {
@@ -237,5 +246,4 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  worker               - Start as worker\n")
 	fmt.Fprintf(os.Stderr, "  dashboard [--port <port>] - Start web dashboard\n")
 	fmt.Fprintf(os.Stderr, "  elect-leader         - Force election of new leader master\n")
-	return
 }

@@ -13,6 +13,7 @@ import (
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,13 +23,13 @@ import (
 )
 
 const (
-	clusterManagementDelay = 2 * time.Second
+	clusterManagementDelay  = 2 * time.Second
 	raftInitializationDelay = 2 * time.Second
-	taskTimeout = 15 * time.Second
-	fileValidationInterval = 10 * time.Second
-	clusterMonitorInterval = 10 * time.Second
-	raftMonitorInterval = 1 * time.Second
-	taskMonitorInterval = 2 * time.Second
+	taskTimeout             = 15 * time.Second
+	fileValidationInterval  = 10 * time.Second
+	clusterMonitorInterval  = 10 * time.Second
+	raftMonitorInterval     = 1 * time.Second
+	taskMonitorInterval     = 2 * time.Second
 )
 
 type JobPhase int
@@ -76,6 +77,9 @@ type Master struct {
 	myID           int
 	raftAddrs      []string
 	rpcAddrs       []string
+	// Tracciamento worker
+	workers        map[string]*WorkerInfo // Worker ID -> WorkerInfo
+	workerLastSeen map[string]time.Time   // Worker ID -> Last seen time
 }
 
 func (m *Master) Apply(logEntry *raft.Log) interface{} {
@@ -546,6 +550,21 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 	if taskToDo != nil {
 		*reply = *taskToDo
 		fmt.Printf("[Master] Restituisco task: %v\n", *taskToDo)
+
+		// Traccia il worker che ha richiesto il task
+		// Genera un ID worker basato sull'indirizzo IP della connessione
+		workerID := fmt.Sprintf("worker-%d", time.Now().UnixNano()%1000)
+		if _, exists := m.workers[workerID]; !exists {
+			m.workers[workerID] = &WorkerInfo{
+				ID:        workerID,
+				Status:    "active",
+				LastSeen:  time.Now(),
+				TasksDone: 0,
+			}
+		}
+		m.workerLastSeen[workerID] = time.Now()
+		m.workers[workerID].LastSeen = time.Now()
+		fmt.Printf("[Master] Worker %s tracciato, ultimo visto: %v\n", workerID, time.Now())
 	} else {
 		*reply = Task{Type: NoTask}
 		fmt.Printf("[Master] Nessun task disponibile, restituisco NoTask\n")
@@ -607,6 +626,14 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 	}
 
 	fmt.Printf("[Master] TaskCompleted applicato con successo: %s TaskID=%d\n", op, args.TaskID)
+
+	// Aggiorna il conteggio dei task completati per tutti i worker attivi
+	// (in una implementazione reale, dovresti tracciare quale worker ha completato il task)
+	for _, worker := range m.workers {
+		worker.TasksDone++
+		worker.LastSeen = time.Now()
+	}
+
 	return nil
 }
 func (m *Master) Done() bool {
@@ -684,6 +711,9 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 		myID:           me,
 		raftAddrs:      raftAddrs,
 		rpcAddrs:       rpcAddrs,
+		// Inizializza il tracciamento worker
+		workers:        make(map[string]*WorkerInfo),
+		workerLastSeen: make(map[string]time.Time),
 	}
 
 	// Popola la mappa dei membri del cluster
@@ -834,7 +864,18 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	rpc.HandleHTTP()
 
 	go func() {
-		l, e := net.Listen("tcp", rpcAddrs[me])
+		// Per Docker, usa 0.0.0.0 invece di localhost per permettere connessioni da altri container
+		listenAddr := rpcAddrs[me]
+		if os.Getenv("DOCKER_ENV") == "true" || os.Getenv("RAFT_ADDRESSES") != "" {
+			// Se siamo in Docker, sostituisci localhost con 0.0.0.0
+			listenAddr = strings.Replace(listenAddr, "localhost", "0.0.0.0", 1)
+			// Se l'indirizzo inizia solo con :, aggiungi 0.0.0.0
+			if strings.HasPrefix(listenAddr, ":") {
+				listenAddr = "0.0.0.0" + listenAddr
+			}
+		}
+		fmt.Printf("[Master %d] Starting RPC server on %s\n", me, listenAddr)
+		l, e := net.Listen("tcp", listenAddr)
 		if e != nil {
 			fmt.Printf("RPC listen error: %s\n", e)
 			return
@@ -1318,6 +1359,48 @@ func (m *Master) RemoveClusterMember(raftAddr string) error {
 	return nil
 }
 
+// GetMasterInfo restituisce informazioni sul master tramite RPC
+func (m *Master) GetMasterInfo(args *GetMasterInfoArgs, reply *MasterInfoReply) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	raftState := m.raft.State()
+	isLeader := raftState == raft.Leader
+	leaderAddr := m.raft.Leader()
+
+	reply.MyID = m.myID
+	reply.RaftState = raftState.String()
+	reply.IsLeader = isLeader
+	reply.LeaderAddress = string(leaderAddr)
+	// clusterMembers è una map[string]string, convertiamo in slice di int
+	reply.ClusterMembers = make([]int, 0, len(m.clusterMembers))
+	for _, _ = range m.clusterMembers {
+		reply.ClusterMembers = append(reply.ClusterMembers, len(reply.ClusterMembers))
+	}
+	reply.RaftAddrs = append([]string(nil), m.raftAddrs...)
+	reply.RpcAddrs = append([]string(nil), m.rpcAddrs...)
+	reply.LastSeen = time.Now()
+
+	return nil
+}
+
+// GetWorkerInfo restituisce informazioni sui worker tramite RPC
+func (m *Master) GetWorkerInfo(args *GetWorkerInfoArgs, reply *WorkerInfoReply) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Crea una slice di worker info
+	workers := make([]WorkerInfo, 0, len(m.workers))
+	for _, worker := range m.workers {
+		workers = append(workers, *worker)
+	}
+
+	reply.Workers = workers
+	reply.LastSeen = time.Now()
+
+	return nil
+}
+
 // GetClusterInfo restituisce informazioni sul cluster
 func (m *Master) GetClusterInfo() map[string]interface{} {
 	m.mu.RLock()
@@ -1358,5 +1441,32 @@ func (m *Master) ForceLeaderElection() error {
 	// Altrimenti, forziamo un'elezione
 	// Questo può essere fatto riavviando il leader attuale
 	fmt.Printf("[Master] Forzando nuova elezione del leader\n")
+	return nil
+}
+
+// LeadershipTransfer RPC method per il trasferimento della leadership
+func (m *Master) LeadershipTransfer(args *LeadershipTransferArgs, reply *LeadershipTransferReply) error {
+	if m.raft.State() == raft.Leader {
+		// Se siamo già leader, trasferiamo la leadership
+		fmt.Printf("[Master %d] Iniziando trasferimento leadership...\n", m.myID)
+		future := m.raft.LeadershipTransfer()
+		err := future.Error()
+		if err != nil {
+			fmt.Printf("[Master %d] Errore trasferimento leadership: %v\n", m.myID, err)
+			reply.Success = false
+			reply.Message = fmt.Sprintf("Failed to transfer leadership: %v", err)
+			return nil
+		}
+		
+		fmt.Printf("[Master %d] Leadership transfer avviato con successo\n", m.myID)
+		reply.Success = true
+		reply.Message = "Leadership transfer initiated successfully"
+		return nil
+	}
+
+	// Altrimenti, forziamo un'elezione
+	fmt.Printf("[Master %d] Non sono il leader (stato: %s), non posso trasferire la leadership\n", m.myID, m.raft.State())
+	reply.Success = false
+	reply.Message = "Non sono il leader, non posso trasferire la leadership"
 	return nil
 }

@@ -8,26 +8,21 @@ ENV GOSUMDB=sum.golang.org
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 
-# Copia solo i file di dipendenze per ottimizzare la cache
-COPY go.mod go.sum ./
+# Copia tutto il progetto (approccio semplificato)
+COPY . .
 
-# Download delle dipendenze con verbose output per debug
-RUN go mod download -x
-
-# Copia il codice sorgente
-COPY src/ ./src/
-
-# Compila l'applicazione
-WORKDIR /app/src
-RUN go build -o ../mapreduce
+# Compila direttamente senza separare il download
+RUN go build -o mapreduce ./src
 
 # --- Fase 2: Release ---
 FROM alpine:latest
 WORKDIR /root/
+
+# Installa ca-certificates per HTTPS
+RUN apk --no-cache add ca-certificates
+
 COPY --from=builder /app/mapreduce .
-# Crea directory data e copia i file di input
-RUN mkdir -p data
-COPY data/*.txt ./data/
-# Verifica che i file siano stati copiati correttamente
-RUN ls -la data/
+COPY --from=builder /app/data ./data
+COPY --from=builder /app/web ./web
+
 CMD ["./mapreduce"]

@@ -16,7 +16,7 @@ x-common-vars: &common-vars
 x-master-config: &master-config
   build:
     context: ..
-    dockerfile: docker/Dockerfile.simple
+    dockerfile: docker/Dockerfile
   networks:
     - mapreduce-net
   volumes:
@@ -32,7 +32,7 @@ x-master-config: &master-config
 x-worker-config: &worker-config
   build:
     context: ..
-    dockerfile: docker/Dockerfile.simple
+    dockerfile: docker/Dockerfile
   command: ["./mapreduce", "worker"]
   depends_on: ["master0", "master1", "master2"]
   networks:
@@ -96,8 +96,8 @@ services:
     volumes:
       - intermediate-data:/tmp/mapreduce
       - ./data:/root/data:ro
-      - ./web:/root/web:ro
     environment:
+      RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234"
       RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
       TMP_PATH: "/tmp/mapreduce"
       METRICS_ENABLED: "true"

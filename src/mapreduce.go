@@ -91,7 +91,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 	fmt.Println("Worker terminato")
 }
 
-// findAvailableMaster cerca un master disponibile tra quelli configurati
+// findAvailableMaster cerca il master leader tra quelli configurati
 func findAvailableMaster(rpcAddrs []string) string {
 	for _, addr := range rpcAddrs {
 		// Prova a connettersi al master
@@ -100,13 +100,33 @@ func findAvailableMaster(rpcAddrs []string) string {
 			continue // Master non disponibile, prova il prossimo
 		}
 
-		// Testa la connessione con una chiamata RPC semplice
-		var reply Reply
-		err = client.Call("Master.RequestTask", RequestTaskArgs{}, &reply)
+		// Chiedi informazioni sul master per verificare se è il leader
+		var args GetMasterInfoArgs
+		var reply MasterInfoReply
+		err = client.Call("Master.GetMasterInfo", &args, &reply)
+		client.Close()
+
+		if err == nil && reply.IsLeader {
+			fmt.Printf("Worker trovato leader master: %s (ID: %d)\n", addr, reply.MyID)
+			return addr // Master leader disponibile
+		}
+	}
+
+	// Se nessun leader è stato trovato, prova il primo master disponibile come fallback
+	fmt.Println("Nessun leader trovato, provo il primo master disponibile...")
+	for _, addr := range rpcAddrs {
+		client, err := rpc.DialHTTP("tcp", addr)
+		if err != nil {
+			continue
+		}
+
+		var reply Task
+		err = client.Call("Master.AssignTask", RequestTaskArgs{}, &reply)
 		client.Close()
 
 		if err == nil {
-			return addr // Master disponibile
+			fmt.Printf("Worker connesso al master fallback: %s\n", addr)
+			return addr
 		}
 	}
 
@@ -123,7 +143,7 @@ func requestTaskFromMaster(masterAddr string) *Task {
 	defer client.Close()
 
 	var task Task
-	err = client.Call("Master.RequestTask", RequestTaskArgs{}, &task)
+	err = client.Call("Master.AssignTask", RequestTaskArgs{}, &task)
 	if err != nil {
 		fmt.Printf("Errore richiesta task da %s: %v\n", masterAddr, err)
 		return nil

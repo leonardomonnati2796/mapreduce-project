@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net/http"
+	"net/rpc"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +31,6 @@ const (
 	idleTimeout  = 60 * time.Second
 	// Job simulation
 	defaultNReduce = 3
-	jobProcessingTime = 5 * time.Second
 )
 
 // Dashboard gestisce l'interfaccia web
@@ -353,21 +352,6 @@ func (d *Dashboard) getMetricsData() (map[string]interface{}, error) {
 
 // getJobsData raccoglie i dati dei job
 func (d *Dashboard) getJobsData() ([]JobInfo, error) {
-	if d.master == nil {
-		// Restituisce dati simulati se il master non è disponibile
-		return []JobInfo{
-			{
-				ID:          "job-1",
-				Status:      "running",
-				Phase:       "map",
-				StartTime:   time.Now().Add(-5 * time.Minute),
-				MapTasks:    10,
-				ReduceTasks: 5,
-				Progress:    75.5,
-			},
-		}, nil
-	}
-
 	// In una implementazione reale, raccoglieresti i dati dal Master
 	// Per ora restituiamo dati simulati
 	jobs := []JobInfo{
@@ -384,103 +368,260 @@ func (d *Dashboard) getJobsData() ([]JobInfo, error) {
 	return jobs, nil
 }
 
-// getWorkersData raccoglie i dati dei worker
+// getWorkersData raccoglie i dati dei worker interrogando solo il leader master
 func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
-	// Genera dati dinamici con variazioni realistiche
-	now := time.Now()
+	// Ottieni gli indirizzi RPC dei master
+	rpcAddrs := getMasterRpcAddresses()
 
-	// Simula variazioni nei task completati e negli stati
-	baseTime := now.Add(-time.Duration(rand.Intn(60)) * time.Second)
-	tasksDone1 := 15 + rand.Intn(5) // Varia tra 15-19
-	tasksDone2 := 12 + rand.Intn(3) // Varia tra 12-14
+	// Debug: stampa gli indirizzi RPC che stiamo usando
+	fmt.Printf("[Dashboard] Getting worker data from masters: %v\n", rpcAddrs)
 
-	// Simula occasionalmente worker inattivi
-	status1 := "active"
-	status2 := "active"
-	if rand.Float32() < 0.1 { // 10% chance di worker inattivo
-		if rand.Float32() < 0.5 {
-			status1 = "idle"
-		} else {
-			status2 = "idle"
+	// Trova prima il leader master
+	var leaderAddr string
+	var leaderID int = -1
+
+	for i, rpcAddr := range rpcAddrs {
+		client, err := rpc.DialHTTP("tcp", rpcAddr)
+		if err != nil {
+			fmt.Printf("[Dashboard] Failed to connect to master %d at %s: %v\n", i, rpcAddr, err)
+			continue
+		}
+
+		var args GetMasterInfoArgs
+		var reply MasterInfoReply
+		err = client.Call("Master.GetMasterInfo", &args, &reply)
+		client.Close()
+
+		if err == nil && reply.IsLeader {
+			leaderAddr = rpcAddr
+			leaderID = i
+			fmt.Printf("[Dashboard] Found leader master %d at %s\n", i, rpcAddr)
+			break
 		}
 	}
 
-	workers := []WorkerInfoDashboard{
-		{
-			ID:        "worker-1",
-			Status:    status1,
-			LastSeen:  baseTime,
-			TasksDone: tasksDone1,
-		},
-		{
-			ID:        "worker-2",
-			Status:    status2,
-			LastSeen:  baseTime.Add(-time.Duration(rand.Intn(30)) * time.Second),
-			TasksDone: tasksDone2,
-		},
+	// Se non troviamo il leader, interroga tutti i master come fallback
+	if leaderAddr == "" {
+		fmt.Printf("[Dashboard] No leader found, using fallback approach\n")
+		return d.getWorkersDataFromAllMasters(rpcAddrs)
 	}
 
-	// Aggiungi occasionalmente un terzo worker
-	if rand.Float32() < 0.3 { // 30% chance
-		workers = append(workers, WorkerInfoDashboard{
-			ID:        "worker-3",
-			Status:    "active",
-			LastSeen:  baseTime.Add(-time.Duration(rand.Intn(20)) * time.Second),
-			TasksDone: 8 + rand.Intn(4), // Varia tra 8-11
+	// Interroga solo il leader per ottenere le informazioni sui worker
+	workerInfo, err := d.queryWorkerInfo(leaderID, leaderAddr)
+	if err != nil {
+		fmt.Printf("[Dashboard] Failed to get worker info from leader master %d at %s: %v\n", leaderID, leaderAddr, err)
+		return d.getWorkersDataFromAllMasters(rpcAddrs)
+	}
+
+	// Converti i worker info in WorkerInfoDashboard
+	var allWorkers []WorkerInfoDashboard
+	for _, worker := range workerInfo.Workers {
+		allWorkers = append(allWorkers, WorkerInfoDashboard{
+			ID:        worker.ID,
+			Status:    worker.Status,
+			LastSeen:  worker.LastSeen,
+			TasksDone: worker.TasksDone,
 		})
 	}
 
-	return workers, nil
+	// Se non ci sono worker reali, restituisce dati di fallback
+	if len(allWorkers) == 0 {
+		allWorkers = []WorkerInfoDashboard{
+			{
+				ID:        "worker-1",
+				Status:    "unknown",
+				LastSeen:  time.Now().Add(-5 * time.Minute),
+				TasksDone: 0,
+			},
+		}
+	}
+
+	fmt.Printf("[Dashboard] Found %d workers from leader master\n", len(allWorkers))
+	return allWorkers, nil
 }
 
-// getMastersData raccoglie i dati dei master
+// getWorkersDataFromAllMasters fallback method che interroga tutti i master
+func (d *Dashboard) getWorkersDataFromAllMasters(rpcAddrs []string) ([]WorkerInfoDashboard, error) {
+	var allWorkers []WorkerInfoDashboard
+	workerMap := make(map[string]*WorkerInfoDashboard) // Per evitare duplicati
+
+	// Interroga ogni master per ottenere le informazioni sui worker
+	for i, rpcAddr := range rpcAddrs {
+		workerInfo, err := d.queryWorkerInfo(i, rpcAddr)
+		if err != nil {
+			fmt.Printf("[Dashboard] Failed to get worker info from master %d at %s: %v\n", i, rpcAddr, err)
+			continue
+		}
+
+		// Aggiungi i worker alla mappa (evita duplicati)
+		for _, worker := range workerInfo.Workers {
+			if existingWorker, exists := workerMap[worker.ID]; exists {
+				// Aggiorna il worker esistente se questo è più recente
+				if worker.LastSeen.After(existingWorker.LastSeen) {
+					workerMap[worker.ID] = &WorkerInfoDashboard{
+						ID:        worker.ID,
+						Status:    worker.Status,
+						LastSeen:  worker.LastSeen,
+						TasksDone: worker.TasksDone,
+					}
+				}
+			} else {
+				workerMap[worker.ID] = &WorkerInfoDashboard{
+					ID:        worker.ID,
+					Status:    worker.Status,
+					LastSeen:  worker.LastSeen,
+					TasksDone: worker.TasksDone,
+				}
+			}
+		}
+	}
+
+	// Converti la mappa in slice
+	for _, worker := range workerMap {
+		allWorkers = append(allWorkers, *worker)
+	}
+
+	// Se non ci sono worker reali, restituisce dati di fallback
+	if len(allWorkers) == 0 {
+		allWorkers = []WorkerInfoDashboard{
+			{
+				ID:        "worker-1",
+				Status:    "unknown",
+				LastSeen:  time.Now().Add(-5 * time.Minute),
+				TasksDone: 0,
+			},
+		}
+	}
+
+	fmt.Printf("[Dashboard] Found %d unique workers from all masters\n", len(allWorkers))
+	return allWorkers, nil
+}
+
+// getMastersData raccoglie i dati dei master interrogando i master reali
 func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
-	// Genera dati dinamici con variazioni realistiche
-	now := time.Now()
+	// Ottieni gli indirizzi RPC dei master
+	rpcAddrs := getMasterRpcAddresses()
 
-	// Simula variazioni nei tempi di last seen
-	baseTime := now.Add(-time.Duration(rand.Intn(30)) * time.Second)
+	// Debug: stampa gli indirizzi RPC che stiamo usando
+	fmt.Printf("[Dashboard] Using RPC addresses: %v\n", rpcAddrs)
 
-	// Simula occasionalmente cambi di leader (5% chance)
-	leaderIndex := 0
-	if rand.Float32() < 0.05 { // 5% chance di cambio leader
-		leaderIndex = rand.Intn(3)
+	var masters []MasterInfo
+
+	// Interroga ogni master per ottenere le informazioni reali
+	for i, rpcAddr := range rpcAddrs {
+		masterInfo, err := d.queryMasterInfo(i, rpcAddr)
+		if err != nil {
+			// Se non riesci a contattare il master, aggiungi informazioni di fallback
+			masterInfo = MasterInfo{
+				ID:       fmt.Sprintf("master-%d", i),
+				Role:     "unknown",
+				State:    "unreachable",
+				Leader:   false,
+				LastSeen: time.Now().Add(-5 * time.Minute), // Indica che è stato visto molto tempo fa
+			}
+		}
+		masters = append(masters, masterInfo)
 	}
 
-	masters := []MasterInfo{
-		{
-			ID:       "master-0",
-			Role:     "leader",
-			State:    "leader",
-			Leader:   leaderIndex == 0,
-			LastSeen: baseTime,
-		},
-		{
-			ID:       "master-1",
-			Role:     "follower",
-			State:    "follower",
-			Leader:   leaderIndex == 1,
-			LastSeen: baseTime.Add(-time.Duration(rand.Intn(15)) * time.Second),
-		},
-		{
-			ID:       "master-2",
-			Role:     "follower",
-			State:    "follower",
-			Leader:   leaderIndex == 2,
-			LastSeen: baseTime.Add(-time.Duration(rand.Intn(20)) * time.Second),
-		},
-	}
-
-	// Aggiorna il ruolo del leader
-	if leaderIndex != 0 {
-		masters[leaderIndex].Role = "leader"
-		masters[leaderIndex].State = "leader"
-		masters[0].Role = "follower"
-		masters[0].State = "follower"
-		masters[0].Leader = false
+	// Se non ci sono master configurati, restituisce dati di fallback
+	if len(masters) == 0 {
+		masters = []MasterInfo{
+			{
+				ID:       "master-0",
+				Role:     "unknown",
+				State:    "not_configured",
+				Leader:   false,
+				LastSeen: time.Now().Add(-10 * time.Minute),
+			},
+		}
 	}
 
 	return masters, nil
+}
+
+// queryWorkerInfo interroga un master specifico per ottenere le informazioni sui worker
+func (d *Dashboard) queryWorkerInfo(masterID int, rpcAddr string) (WorkerInfoReply, error) {
+	// Debug: stampa l'indirizzo che stiamo tentando di contattare
+	fmt.Printf("[Dashboard] Attempting to get worker info from master %d at %s\n", masterID, rpcAddr)
+
+	// Crea una connessione RPC al master
+	client, err := rpc.DialHTTP("tcp", rpcAddr)
+	if err != nil {
+		fmt.Printf("[Dashboard] Failed to connect to master %d at %s: %v\n", masterID, rpcAddr, err)
+		return WorkerInfoReply{}, fmt.Errorf("failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
+	}
+	defer client.Close()
+
+	// Prepara la richiesta
+	var args GetWorkerInfoArgs
+	var reply WorkerInfoReply
+
+	// Chiama il metodo RPC con timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Call("Master.GetWorkerInfo", &args, &reply)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return WorkerInfoReply{}, fmt.Errorf("RPC call failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		return WorkerInfoReply{}, fmt.Errorf("RPC call timeout")
+	}
+
+	fmt.Printf("[Dashboard] Got worker info from master %d: %d workers\n", masterID, len(reply.Workers))
+	return reply, nil
+}
+
+// queryMasterInfo interroga un master specifico per ottenere le sue informazioni
+func (d *Dashboard) queryMasterInfo(masterID int, rpcAddr string) (MasterInfo, error) {
+	// Debug: stampa l'indirizzo che stiamo tentando di contattare
+	fmt.Printf("[Dashboard] Attempting to connect to master %d at %s\n", masterID, rpcAddr)
+
+	// Crea una connessione RPC al master
+	client, err := rpc.DialHTTP("tcp", rpcAddr)
+	if err != nil {
+		fmt.Printf("[Dashboard] Failed to connect to master %d at %s: %v\n", masterID, rpcAddr, err)
+		return MasterInfo{}, fmt.Errorf("failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
+	}
+	defer client.Close()
+
+	// Prepara la richiesta
+	var args GetMasterInfoArgs
+	var reply MasterInfoReply
+
+	// Chiama il metodo RPC con timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Call("Master.GetMasterInfo", &args, &reply)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return MasterInfo{}, fmt.Errorf("RPC call failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		return MasterInfo{}, fmt.Errorf("RPC call timeout")
+	}
+
+	// Converti la risposta in MasterInfo
+	role := "follower"
+	state := reply.RaftState
+	if reply.IsLeader {
+		role = "leader"
+		state = "leader"
+	}
+
+	return MasterInfo{
+		ID:       fmt.Sprintf("master-%d", masterID),
+		Role:     role,
+		State:    state,
+		Leader:   reply.IsLeader,
+		LastSeen: reply.LastSeen,
+	}, nil
 }
 
 // Start avvia il server web
@@ -796,7 +937,6 @@ func (d *Dashboard) restartCluster(c *gin.Context) {
 
 // electLeader forza l'elezione di un nuovo leader master
 func (d *Dashboard) electLeader(c *gin.Context) {
-	// Simula l'elezione del leader
 	fmt.Println("=== LEADER ELECTION TRIGGERED ===")
 	fmt.Println("Forzando l'elezione di un nuovo leader master...")
 
@@ -820,49 +960,107 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 		fmt.Printf("  Master %d: %s (RPC: %s)\n", i, addr, rpcAddrs[i])
 	}
 
-	// Trova un master candidato (escludi il leader attuale se possibile)
-	candidateID := 0
-	if len(raftAddrs) > 1 {
-		candidateID = 1 // Usa il secondo master come candidato
+	// Trova il leader attuale
+	var currentLeaderID int = -1
+	var currentLeaderAddr string
+	for i, rpcAddr := range rpcAddrs {
+		client, err := rpc.DialHTTP("tcp", rpcAddr)
+		if err != nil {
+			continue
+		}
+
+		var args GetMasterInfoArgs
+		var reply MasterInfoReply
+		err = client.Call("Master.GetMasterInfo", &args, &reply)
+		client.Close()
+
+		if err == nil && reply.IsLeader {
+			currentLeaderID = i
+			currentLeaderAddr = rpcAddr
+			fmt.Printf("Leader attuale trovato: Master %d (%s)\n", i, rpcAddr)
+			break
+		}
 	}
 
-	fmt.Printf("Candidato leader: Master %d\n", candidateID)
+	if currentLeaderID == -1 {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "No leader found in the cluster",
+			"action":  "elect_leader",
+		})
+		return
+	}
 
-	// Simula il processo di elezione
-	fmt.Println("Invio richiesta di elezione...")
-	time.Sleep(electionDelay)
+	// Trova un candidato per la leadership (il prossimo master nella lista)
+	newLeaderID := (currentLeaderID + 1) % len(rpcAddrs)
 
-	fmt.Println("Raccolta voti dai follower...")
-	time.Sleep(electionDelay)
+	fmt.Printf("Trasferendo leadership da Master %d a Master %d...\n", currentLeaderID, newLeaderID)
 
-	fmt.Println("Verifica maggioranza...")
-	time.Sleep(electionDelay / 2)
+	// Prova a trasferire la leadership al nuovo master
+	client, err := rpc.DialHTTP("tcp", currentLeaderAddr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("Failed to connect to current leader: %v", err),
+			"action":  "elect_leader",
+		})
+		return
+	}
 
-	fmt.Printf("✓ Nuovo leader eletto: Master %d\n", candidateID)
-	fmt.Printf("✓ Leader election completata con successo!\n")
+	var transferArgs LeadershipTransferArgs
+	var transferReply LeadershipTransferReply
+	err = client.Call("Master.LeadershipTransfer", &transferArgs, &transferReply)
+	client.Close()
 
-	// Mostra lo stato finale
-	fmt.Println("\n=== STATO FINALE ===")
-	for i := 0; i < len(raftAddrs); i++ {
-		status := "Follower"
-		if i == candidateID {
-			status = "Leader"
+	if err != nil {
+		fmt.Printf("Errore trasferimento leadership: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("Failed to transfer leadership: %v", err),
+			"action":  "elect_leader",
+		})
+		return
+	}
+
+	fmt.Printf("✓ Leadership transfer avviato con successo!\n")
+	fmt.Printf("✓ Nuovo leader dovrebbe essere: Master %d\n", newLeaderID)
+
+	// Aspetta un momento per permettere il trasferimento
+	time.Sleep(2 * time.Second)
+
+	// Verifica il nuovo leader
+	var actualNewLeaderID int = -1
+	for i, rpcAddr := range rpcAddrs {
+		client, err := rpc.DialHTTP("tcp", rpcAddr)
+		if err != nil {
+			continue
 		}
-		fmt.Printf("Master %d: %s\n", i, status)
+
+		var args GetMasterInfoArgs
+		var reply MasterInfoReply
+		err = client.Call("Master.GetMasterInfo", &args, &reply)
+		client.Close()
+
+		if err == nil && reply.IsLeader {
+			actualNewLeaderID = i
+			fmt.Printf("Nuovo leader confermato: Master %d (%s)\n", i, rpcAddr)
+			break
+		}
 	}
 
 	// Prepara la risposta
 	leaderInfo := map[string]interface{}{
-		"old_leader":    0, // Assumiamo che il leader precedente fosse master-0
-		"new_leader":    candidateID,
-		"leader_id":     fmt.Sprintf("master-%d", candidateID),
-		"election_time": time.Now(),
-		"total_masters": len(raftAddrs),
+		"old_leader":          currentLeaderID,
+		"new_leader":          actualNewLeaderID,
+		"leader_id":           fmt.Sprintf("master-%d", actualNewLeaderID),
+		"election_time":       time.Now(),
+		"total_masters":       len(raftAddrs),
+		"transfer_successful": actualNewLeaderID != currentLeaderID,
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":     true,
-		"message":     fmt.Sprintf("Leader election completed successfully. New leader: Master %d", candidateID),
+		"message":     fmt.Sprintf("Leader election completed successfully. New leader: Master %d", actualNewLeaderID),
 		"action":      "elect_leader",
 		"leader_info": leaderInfo,
 		"timestamp":   time.Now(),
@@ -903,53 +1101,39 @@ func (d *Dashboard) submitJob(c *gin.Context) {
 func (d *Dashboard) getJobResults(c *gin.Context) {
 	jobID := c.Param("id")
 
-	// Legge i file di output reali dalla cartella output
-	basePath := os.Getenv("OUTPUT_PATH")
-	if basePath == "" {
-		if d.config != nil {
-			basePath = d.config.GetOutputPath()
-		} else {
-			basePath = "data/output"
-		}
-	}
+	// Usa la funzione getCurrentOutput per evitare duplicazione
+	outputData := d.getCurrentOutputData()
 
-	var results []gin.H
-	var allOutput string
-
-	// Cerca tutti i file mr-out-* nella directory
-	files, err := filepath.Glob(filepath.Join(basePath, "mr-out-*"))
-	if err != nil {
+	// Gestisce errori nella lettura dei file
+	if outputData.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "Failed to read output files",
-			"details": err.Error(),
+			"details": outputData.Error.Error(),
 		})
 		return
 	}
 
-	// Se non ci sono file di output, il job potrebbe essere ancora in processing
-	if len(files) == 0 {
-		// Per i job di testo, controlla se il job è ancora in processing
-		if strings.HasPrefix(jobID, "text-job-") {
-			// Simula che il job sia ancora in processing per i primi 5 secondi
-			jobTimestamp := strings.TrimPrefix(jobID, "text-job-")
-			// Parsing semplificato del timestamp
-			if len(jobTimestamp) > 0 {
-				// Controlla se sono passati meno di 5 secondi
-				time.Sleep(processingDelay) // Piccola pausa per simulare processing
-
-				c.JSON(http.StatusOK, gin.H{
-					"success":   true,
-					"job_id":    jobID,
-					"status":    "running",
-					"progress":  50,
-					"message":   "Job is still processing",
-					"timestamp": time.Now(),
-				})
-				return
-			}
+	// Per i job di testo, controlla se il job è ancora in processing
+	if strings.HasPrefix(jobID, "text-job-") && len(outputData.Files) == 0 {
+		// Simula che il job sia ancora in processing per i primi 5 secondi
+		jobTimestamp := strings.TrimPrefix(jobID, "text-job-")
+		if len(jobTimestamp) > 0 {
+			time.Sleep(processingDelay) // Piccola pausa per simulare processing
+			c.JSON(http.StatusOK, gin.H{
+				"success":   true,
+				"job_id":    jobID,
+				"status":    "running",
+				"progress":  50,
+				"message":   "Job is still processing",
+				"timestamp": time.Now(),
+			})
+			return
 		}
+	}
 
+	// Se non ci sono file di output
+	if len(outputData.Files) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success":         true,
 			"job_id":          jobID,
@@ -962,28 +1146,26 @@ func (d *Dashboard) getJobResults(c *gin.Context) {
 		return
 	}
 
-	// Legge ogni file di output
-	for _, file := range files {
-		content, err := os.ReadFile(file)
+	// Prepara i risultati dettagliati
+	var results []gin.H
+	for _, file := range outputData.Files {
+		// Legge il contenuto del file per i dettagli
+		basePath := d.getOutputPath()
+		filePath := filepath.Join(basePath, file)
+		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue // Salta file che non riesce a leggere
+			continue
 		}
 
 		lines := strings.Count(string(content), "\n")
 		size := len(content)
 
 		results = append(results, gin.H{
-			"file":    filepath.Base(file),
+			"file":    file,
 			"lines":   lines,
 			"size":    fmt.Sprintf("%.1fKB", float64(size)/1024.0),
 			"content": string(content),
 		})
-
-		// Aggiunge il contenuto al risultato completo
-		if allOutput != "" {
-			allOutput += "\n"
-		}
-		allOutput += string(content)
 	}
 
 	response := gin.H{
@@ -991,7 +1173,7 @@ func (d *Dashboard) getJobResults(c *gin.Context) {
 		"job_id":          jobID,
 		"status":          "completed",
 		"results":         results,
-		"combined_output": allOutput,
+		"combined_output": outputData.Output,
 		"timestamp":       time.Now(),
 	}
 
@@ -1000,46 +1182,20 @@ func (d *Dashboard) getJobResults(c *gin.Context) {
 
 // getCurrentOutput restituisce l'output del job corrente
 func (d *Dashboard) getCurrentOutput(c *gin.Context) {
-	// Legge i file di output reali dalla cartella output
-	basePath := os.Getenv("OUTPUT_PATH")
-	if basePath == "" {
-		if d.config != nil {
-			basePath = d.config.GetOutputPath()
-		} else {
-			basePath = "data/output"
-		}
-	}
+	outputData := d.getCurrentOutputData()
 
-	var allOutput string
-	var files []string
-
-	// Cerca tutti i file mr-out-* nella directory
-	outputFiles, err := filepath.Glob(filepath.Join(basePath, "mr-out-*"))
-	if err != nil {
+	// Gestisce errori nella lettura dei file
+	if outputData.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "Failed to read output files",
-			"details": err.Error(),
+			"details": outputData.Error.Error(),
 		})
 		return
 	}
 
-	// Legge ogni file di output e li ordina
-	for _, file := range outputFiles {
-		content, err := os.ReadFile(file)
-		if err != nil {
-			continue // Salta file che non riesce a leggere
-		}
-
-		files = append(files, filepath.Base(file))
-		if allOutput != "" {
-			allOutput += "\n"
-		}
-		allOutput += string(content)
-	}
-
 	// Se non ci sono file di output, restituisce un messaggio
-	if len(files) == 0 {
+	if len(outputData.Files) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success":   true,
 			"message":   "No output files found",
@@ -1052,9 +1208,9 @@ func (d *Dashboard) getCurrentOutput(c *gin.Context) {
 
 	response := gin.H{
 		"success":   true,
-		"message":   fmt.Sprintf("Found %d output files", len(files)),
-		"output":    allOutput,
-		"files":     files,
+		"message":   fmt.Sprintf("Found %d output files", len(outputData.Files)),
+		"output":    outputData.Output,
+		"files":     outputData.Files,
 		"timestamp": time.Now(),
 	}
 
@@ -1170,15 +1326,8 @@ func (d *Dashboard) simulateTextProcessing(jobID, inputFile string, nReduce int)
 
 // generateMapReduceOutput genera i file di output del MapReduce
 func (d *Dashboard) generateMapReduceOutput(jobID, inputFile string, nReduce int) {
-	// Determina la cartella di output
-	outputDir := os.Getenv("OUTPUT_PATH")
-	if outputDir == "" {
-		if d.config != nil {
-			outputDir = d.config.GetOutputPath()
-		} else {
-			outputDir = "data/output"
-		}
-	}
+	// Usa la funzione helper per ottenere il percorso di output
+	outputDir := d.getOutputPath()
 	// Leggi il file di input
 	content, err := os.ReadFile(inputFile)
 	if err != nil {
@@ -1246,6 +1395,64 @@ func hash(s string) int {
 		h = -h
 	}
 	return h
+}
+
+// OutputData struttura per i dati di output
+type OutputData struct {
+	Output string
+	Files  []string
+	Error  error
+}
+
+// getCurrentOutputData raccoglie i dati di output senza duplicazione
+func (d *Dashboard) getCurrentOutputData() OutputData {
+	basePath := d.getOutputPath()
+
+	var allOutput string
+	var files []string
+
+	// Cerca tutti i file mr-out-* nella directory
+	outputFiles, err := filepath.Glob(filepath.Join(basePath, "mr-out-*"))
+	if err != nil {
+		return OutputData{
+			Output: "",
+			Files:  []string{},
+			Error:  fmt.Errorf("failed to read output files: %v", err),
+		}
+	}
+
+	// Legge ogni file di output e li ordina
+	for _, file := range outputFiles {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue // Salta file che non riesce a leggere
+		}
+
+		files = append(files, filepath.Base(file))
+		if allOutput != "" {
+			allOutput += "\n"
+		}
+		allOutput += string(content)
+	}
+
+	return OutputData{
+		Output: allOutput,
+		Files:  files,
+		Error:  nil,
+	}
+}
+
+// getOutputPath restituisce il percorso della directory di output
+func (d *Dashboard) getOutputPath() string {
+	basePath := os.Getenv("OUTPUT_PATH")
+	if basePath == "" {
+		if d.config != nil {
+			basePath = d.config.GetOutputPath()
+		} else {
+			basePath = "data/output"
+		}
+	}
+	return basePath
 }
 
 // executeDockerManagerCommand esegue comandi del docker-manager.ps1
