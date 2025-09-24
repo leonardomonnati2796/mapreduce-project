@@ -21,6 +21,16 @@ import (
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 )
 
+const (
+	clusterManagementDelay = 2 * time.Second
+	raftInitializationDelay = 2 * time.Second
+	taskTimeout = 15 * time.Second
+	fileValidationInterval = 10 * time.Second
+	clusterMonitorInterval = 10 * time.Second
+	raftMonitorInterval = 1 * time.Second
+	taskMonitorInterval = 2 * time.Second
+)
+
 type JobPhase int
 
 const (
@@ -124,7 +134,7 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 
 			// Forza una nuova elezione del leader
 			go func() {
-				time.Sleep(2 * time.Second)
+				time.Sleep(clusterManagementDelay)
 				fmt.Printf("[Master] Forzando nuova elezione del leader dopo aggiunta master\n")
 				// Il leader attuale può dimettersi per forzare una nuova elezione
 				if m.raft.State() == raft.Leader {
@@ -660,7 +670,7 @@ func (m *Master) RecoveryState() {
 
 	fmt.Printf("[Master] RecoveryState completato: isDone=%v, phase=%v\n", m.isDone, m.phase)
 }
-func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddrs []string) *Master {
+func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddrs []string) (*Master, error) {
 	// Inizializza il generatore di numeri casuali per il delay
 	rand.Seed(time.Now().UnixNano() + int64(me))
 
@@ -701,7 +711,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	advertiseAddr, _ := net.ResolveTCPAddr("tcp", raftAddr)
 	transport, err := raft.NewTCPTransport(raftAddr, advertiseAddr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
-		log.Fatalf("transport: %s", err)
+		return nil, fmt.Errorf("transport: %s", err)
 	}
 	raftDir := fmt.Sprintf("./raft-data/%d", me)
 
@@ -732,19 +742,19 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	fmt.Printf("[Master %d] Reset stato PRIMA di Raft: isDone=%v, phase=%v\n", me, m.isDone, m.phase)
 	logStore, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(raftDir, "log.db")})
 	if err != nil {
-		log.Fatalf("Failed to create log store: %s", err)
+		return nil, fmt.Errorf("failed to create log store: %s", err)
 	}
 	stableStore, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(raftDir, "stable.db")})
 	if err != nil {
-		log.Fatalf("Failed to create stable store: %s", err)
+		return nil, fmt.Errorf("failed to create stable store: %s", err)
 	}
 	snapshotStore, err := raft.NewFileSnapshotStore(raftDir, 2, os.Stderr)
 	if err != nil {
-		log.Fatalf("Failed to create snapshot store: %s", err)
+		return nil, fmt.Errorf("failed to create snapshot store: %s", err)
 	}
 	ra, err := raft.NewRaft(config, m, logStore, stableStore, snapshotStore, transport)
 	if err != nil {
-		log.Fatalf("raft: %s", err)
+		return nil, fmt.Errorf("raft: %s", err)
 	}
 	m.raft = ra
 	fmt.Printf("[Master %d] Dopo creazione Raft: isDone=%v, phase=%v\n", me, m.isDone, m.phase)
@@ -764,11 +774,11 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	}
 
 	// Aspetta che Raft si stabilizzi prima di procedere
-	time.Sleep(2 * time.Second)
+	time.Sleep(raftInitializationDelay)
 
 	// Monitor dello stato Raft per recovery automatico
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(raftMonitorInterval)
 		defer ticker.Stop()
 		var lastState raft.RaftState
 
@@ -826,14 +836,14 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	go func() {
 		l, e := net.Listen("tcp", rpcAddrs[me])
 		if e != nil {
-			log.Fatalf("RPC listen: %s", e)
+			fmt.Printf("RPC listen error: %s\n", e)
+			return
 		}
 		http.Serve(l, nil)
 	}()
 	// Task timeout monitor: re-queue stuck tasks if the leader does not receive completion in time.
 	go func() {
-		const taskTimeout = 15 * time.Second
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(taskMonitorInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			if m.raft.State() != raft.Leader {
@@ -878,7 +888,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 
 	// File validation monitor: verifica periodicamente la validità dei file intermedi e di output
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(fileValidationInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			if m.raft.State() != raft.Leader {
@@ -914,7 +924,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 			m.mu.Unlock()
 		}
 	}()
-	return m
+	return m, nil
 }
 
 // SubmitJob gestisce la sottomissione di nuovi job MapReduce
@@ -1198,7 +1208,7 @@ func (m *Master) createUnifiedOutputFileInDocker() {
 
 // startClusterManagementMonitor avvia il monitor per la gestione dinamica del cluster
 func (m *Master) startClusterManagementMonitor() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(clusterMonitorInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {

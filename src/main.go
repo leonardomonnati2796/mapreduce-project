@@ -15,6 +15,7 @@ const (
 	raftStabilizationDelay = 10 * time.Second
 	mainLoopTimeout        = 5 * time.Minute
 	tickerInterval         = 2 * time.Second
+	leaderElectionDelay    = 2 * time.Second
 	nReduce                = 10
 	// Exit codes
 	exitSuccess = 0
@@ -27,9 +28,7 @@ const (
 // main è il punto di ingresso principale del programma MapReduce
 // Gestisce l'avvio del master o del worker in base agli argomenti della riga di comando
 func main() {
-	fmt.Printf("DEBUG: main() chiamato con args: %v\n", os.Args)
 	if len(os.Args) < minWorkerArgs {
-		fmt.Printf("DEBUG: Args insufficienti, chiamando usage()\n")
 		usage()
 	}
 
@@ -66,36 +65,28 @@ func runMaster() {
 	me, err := strconv.Atoi(os.Args[2])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid master ID: %v\n", err)
-		os.Exit(exitError)
+		return
 	}
 
 	if me < 0 {
 		fmt.Fprintf(os.Stderr, "Master ID must be non-negative, got %d\n", me)
-		os.Exit(exitError)
+		return
 	}
 
 	files := strings.Split(os.Args[3], ",")
 	if len(files) == 0 || (len(files) == 1 && files[0] == "") {
 		fmt.Fprintf(os.Stderr, "No input files specified\n")
-		os.Exit(exitError)
+		return
 	}
 
-	fmt.Printf("DEBUG: Prima di chiamare getMasterRaftAddresses\n")
 	raftAddrs := getMasterRaftAddresses()
-	fmt.Printf("DEBUG: Prima di chiamare getMasterRpcAddresses\n")
 	rpcAddrs := getMasterRpcAddresses()
 
-	fmt.Printf("DEBUG: raftAddrs = %v\n", raftAddrs)
-	fmt.Printf("DEBUG: rpcAddrs = %v\n", rpcAddrs)
-	fmt.Printf("DEBUG: me = %d, rpcAddrs[me] = %s\n", me, rpcAddrs[me])
-
 	fmt.Printf("Avvio come master %d...\n", me)
-	fmt.Printf("DEBUG: Prima di chiamare MakeMaster\n")
-	m := MakeMaster(files, nReduce, me, raftAddrs, rpcAddrs)
-	fmt.Printf("DEBUG: Dopo chiamata MakeMaster, m=%v\n", m)
-	if m == nil {
-		fmt.Fprintf(os.Stderr, "Failed to create master\n")
-		os.Exit(exitError)
+	m, err := MakeMaster(files, nReduce, me, raftAddrs, rpcAddrs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create master: %v\n", err)
+		return
 	}
 
 	fmt.Printf("[Master %d] Dopo MakeMaster, isDone=%v\n", me, m.Done())
@@ -142,7 +133,7 @@ func runDashboard() {
 	config := GetConfig()
 	if config == nil {
 		fmt.Fprintf(os.Stderr, "Configuration not initialized\n")
-		os.Exit(exitError)
+		return
 	}
 
 	port := config.Dashboard.Port
@@ -154,7 +145,7 @@ func runDashboard() {
 			port, err = strconv.Atoi(os.Args[3])
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Invalid port number: %v\n", err)
-				os.Exit(exitError)
+				return
 			}
 		}
 	}
@@ -168,12 +159,16 @@ func runDashboard() {
 	metrics := NewMetricCollector()
 
 	// Create dashboard
-	dashboard := NewDashboard(config, healthChecker, metrics)
+	dashboard, err := NewDashboard(config, healthChecker, metrics)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create dashboard: %v\n", err)
+		return
+	}
 
 	// Start dashboard
 	if err := dashboard.Start(port); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start dashboard: %v\n", err)
-		os.Exit(exitError)
+		return
 	}
 }
 
@@ -186,7 +181,7 @@ func runLeaderElection() {
 	config := GetConfig()
 	if config == nil {
 		fmt.Fprintf(os.Stderr, "Configuration not initialized\n")
-		os.Exit(exitError)
+		return
 	}
 
 	// Ottieni gli indirizzi dei master
@@ -211,13 +206,13 @@ func runLeaderElection() {
 
 	// Simula il processo di elezione
 	fmt.Println("Invio richiesta di elezione...")
-	time.Sleep(2 * time.Second)
+	time.Sleep(leaderElectionDelay)
 
 	fmt.Println("Raccolta voti dai follower...")
-	time.Sleep(2 * time.Second)
+	time.Sleep(leaderElectionDelay)
 
 	fmt.Println("Verifica maggioranza...")
-	time.Sleep(1 * time.Second)
+	time.Sleep(leaderElectionDelay / 2)
 
 	fmt.Printf("✓ Nuovo leader eletto: Master %d\n", candidateID)
 	fmt.Printf("✓ Leader election completata con successo!\n")
@@ -242,5 +237,5 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  worker               - Start as worker\n")
 	fmt.Fprintf(os.Stderr, "  dashboard [--port <port>] - Start web dashboard\n")
 	fmt.Fprintf(os.Stderr, "  elect-leader         - Force election of new leader master\n")
-	os.Exit(exitError)
+	return
 }

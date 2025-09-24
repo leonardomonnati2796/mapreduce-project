@@ -16,6 +16,9 @@ import (
 const (
 	// Map function constants
 	mapValueCount = "1"
+	// Worker delays
+	workerRetryDelay = 5 * time.Second
+	taskRetryDelay   = 2 * time.Second
 )
 
 // KeyValue represents a key-value pair in MapReduce
@@ -58,7 +61,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		masterAddr := findAvailableMaster(rpcAddrs)
 		if masterAddr == "" {
 			fmt.Println("Nessun master disponibile, riprovo tra 5 secondi...")
-			time.Sleep(5 * time.Second)
+			time.Sleep(workerRetryDelay)
 			continue
 		}
 
@@ -68,7 +71,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		task := requestTaskFromMaster(masterAddr)
 		if task == nil {
 			fmt.Println("Nessun task disponibile, riprovo tra 2 secondi...")
-			time.Sleep(2 * time.Second)
+			time.Sleep(taskRetryDelay)
 			continue
 		}
 

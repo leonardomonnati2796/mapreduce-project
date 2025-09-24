@@ -24,7 +24,7 @@ func getMasterRaftAddresses() []string {
 		return globalConfig.GetRaftAddresses()
 	}
 	// Fallback ai valori di default se la configurazione non è inizializzata
-	return []string{"localhost:1234", "localhost:1235", "localhost:1236"}
+	return []string{defaultRaftPort1, defaultRaftPort2, defaultRaftPort3}
 }
 
 func getMasterRpcAddresses() []string {
@@ -32,7 +32,7 @@ func getMasterRpcAddresses() []string {
 		return globalConfig.GetRPCAddresses()
 	}
 	// Fallback ai valori di default se la configurazione non è inizializzata
-	return []string{"localhost:8000", "localhost:8001", "localhost:8002"}
+	return []string{defaultRpcPort1, defaultRpcPort2, defaultRpcPort3}
 }
 
 type TaskType int

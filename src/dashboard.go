@@ -16,6 +16,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	electionDelay    = 1 * time.Second
+	processingDelay  = 100 * time.Millisecond
+	textProcessDelay = 2 * time.Second
+	simulationDelay  = 3 * time.Second
+	// Server configuration
+	defaultPort = 8080
+	maxPort     = 65535
+	minPort     = 1
+	// Timeouts
+	readTimeout  = 15 * time.Second
+	writeTimeout = 15 * time.Second
+	idleTimeout  = 60 * time.Second
+	// Job simulation
+	defaultNReduce = 3
+	jobProcessingTime = 5 * time.Second
+)
+
 // Dashboard gestisce l'interfaccia web
 type Dashboard struct {
 	config        *Config
@@ -73,15 +91,15 @@ type MasterInfo struct {
 }
 
 // NewDashboard crea un nuovo dashboard
-func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricCollector) *Dashboard {
+func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricCollector) (*Dashboard, error) {
 	if config == nil {
-		panic("config cannot be nil")
+		return nil, fmt.Errorf("config cannot be nil")
 	}
 	if healthChecker == nil {
-		panic("healthChecker cannot be nil")
+		return nil, fmt.Errorf("healthChecker cannot be nil")
 	}
 	if metrics == nil {
-		panic("metrics cannot be nil")
+		return nil, fmt.Errorf("metrics cannot be nil")
 	}
 
 	d := &Dashboard{
@@ -93,7 +111,7 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 	}
 
 	d.setupRoutes()
-	return d
+	return d, nil
 }
 
 // setupRoutes configura le route del dashboard
@@ -467,7 +485,7 @@ func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
 
 // Start avvia il server web
 func (d *Dashboard) Start(port int) error {
-	if port <= 0 || port > 65535 {
+	if port < minPort || port > maxPort {
 		return fmt.Errorf("invalid port number: %d", port)
 	}
 
@@ -477,9 +495,9 @@ func (d *Dashboard) Start(port int) error {
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      d.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 
 	return server.ListenAndServe()
@@ -812,13 +830,13 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 
 	// Simula il processo di elezione
 	fmt.Println("Invio richiesta di elezione...")
-	time.Sleep(1 * time.Second)
+	time.Sleep(electionDelay)
 
 	fmt.Println("Raccolta voti dai follower...")
-	time.Sleep(1 * time.Second)
+	time.Sleep(electionDelay)
 
 	fmt.Println("Verifica maggioranza...")
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(electionDelay / 2)
 
 	fmt.Printf("✓ Nuovo leader eletto: Master %d\n", candidateID)
 	fmt.Printf("✓ Leader election completata con successo!\n")
@@ -918,7 +936,7 @@ func (d *Dashboard) getJobResults(c *gin.Context) {
 			// Parsing semplificato del timestamp
 			if len(jobTimestamp) > 0 {
 				// Controlla se sono passati meno di 5 secondi
-				time.Sleep(100 * time.Millisecond) // Piccola pausa per simulare processing
+				time.Sleep(processingDelay) // Piccola pausa per simulare processing
 
 				c.JSON(http.StatusOK, gin.H{
 					"success":   true,
@@ -1075,7 +1093,7 @@ func (d *Dashboard) processText(c *gin.Context) {
 	}
 
 	if textRequest.NReduce <= 0 {
-		textRequest.NReduce = 3 // Default value
+		textRequest.NReduce = defaultNReduce // Default value
 	}
 
 	// Genera un ID univoco per il job
@@ -1135,7 +1153,7 @@ func (d *Dashboard) processText(c *gin.Context) {
 func (d *Dashboard) processTextWithMaster(jobID, inputFile string, nReduce int, tempDir string) {
 	// In una implementazione reale, useresti il master per processare il file
 	// Per ora, simula il processing
-	time.Sleep(2 * time.Second) // Simula tempo di processing
+	time.Sleep(textProcessDelay) // Simula tempo di processing
 
 	// Processa il testo e genera i file di output
 	d.generateMapReduceOutput(jobID, inputFile, nReduce)
@@ -1144,7 +1162,7 @@ func (d *Dashboard) processTextWithMaster(jobID, inputFile string, nReduce int, 
 // simulateTextProcessing simula il processing del testo
 func (d *Dashboard) simulateTextProcessing(jobID, inputFile string, nReduce int) {
 	// Simula tempo di processing
-	time.Sleep(3 * time.Second)
+	time.Sleep(simulationDelay)
 
 	// Processa il testo e genera i file di output
 	d.generateMapReduceOutput(jobID, inputFile, nReduce)

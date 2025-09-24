@@ -1,5 +1,18 @@
 package main
 
+const (
+	defaultDashboardPort = 8080
+	defaultTempPath      = "temp-local"
+	defaultOutputPath    = "output"
+	defaultRaftDataPath  = "raft-data"
+	defaultRaftPort1     = "localhost:1234"
+	defaultRaftPort2     = "localhost:1235"
+	defaultRaftPort3     = "localhost:1236"
+	defaultRpcPort1      = "localhost:8000"
+	defaultRpcPort2      = "localhost:8001"
+	defaultRpcPort3      = "localhost:8002"
+)
+
 // Config contiene tutta la configurazione del sistema
 type Config struct {
 	Dashboard DashboardConfig `mapstructure:"dashboard"`
@@ -24,13 +37,13 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Per ora restituisce una configurazione di default
 	config := &Config{
 		Dashboard: DashboardConfig{
-			Port:    8080,
+			Port:    defaultDashboardPort,
 			Enabled: true,
 		},
 		Paths: PathConfig{
-			Temp:     "temp-local",
-			Output:   "output",
-			RaftData: "raft-data",
+			Temp:     defaultTempPath,
+			Output:   defaultOutputPath,
+			RaftData: defaultRaftDataPath,
 		},
 	}
 	return config, nil
@@ -44,12 +57,12 @@ func GetConfig() *Config {
 
 // GetRaftAddresses restituisce gli indirizzi Raft dalla configurazione globale
 func (c *Config) GetRaftAddresses() []string {
-	return []string{"localhost:1234", "localhost:1235", "localhost:1236"}
+	return []string{defaultRaftPort1, defaultRaftPort2, defaultRaftPort3}
 }
 
 // GetRPCAddresses restituisce gli indirizzi RPC dalla configurazione globale
 func (c *Config) GetRPCAddresses() []string {
-	return []string{"localhost:8000", "localhost:8001", "localhost:8002"}
+	return []string{defaultRpcPort1, defaultRpcPort2, defaultRpcPort3}
 }
 
 // GetTempPath restituisce il percorso temporaneo dalla configurazione globale
