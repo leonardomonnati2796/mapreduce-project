@@ -525,13 +525,36 @@ function startMaster() {
     if (confirm('Are you sure you want to add a new master to the cluster?\n\nThis will:\n• Add a new master to the cluster\n• Trigger a new leader election\n• Update the cluster configuration')) {
         showNotification('Adding new master to cluster...', 'info', 5000);
         makeApiCall('/api/v1/system/start-master')
-            .then(result => {
+            .then(async result => {
                 showNotification(result.message, result.success ? 'success' : 'danger');
                 if (result.success) {
-                    // Refresh the page after a short delay to show updated cluster state
-                    setTimeout(() => {
-                        location.reload();
-                    }, 2000);
+                    // Immediately refresh data and then poll briefly until the new master appears
+                    try {
+                        await refreshData();
+                        const startTime = Date.now();
+                        const timeoutMs = 20000; // 20s max wait
+                        let initialCount = (window.__lastMastersCount ?? null);
+
+                        // Capture current count from DOM
+                        const countFromDom = () => document.querySelectorAll('#mastersTableBody tr').length;
+                        if (initialCount === null) initialCount = countFromDom();
+
+                        const poll = async () => {
+                            await refreshData();
+                            const current = countFromDom();
+                            if (current > initialCount) return true;
+                            if (Date.now() - startTime > timeoutMs) return false;
+                            return new Promise(resolve => setTimeout(async () => resolve(await poll()), 2000));
+                        };
+
+                        const appeared = await poll();
+                        if (!appeared) {
+                            showNotification('Master added, waiting for cluster to recognize it...', 'warning');
+                        }
+                    } catch (_) {
+                        // Fallback: soft reload if anything goes wrong
+                        setTimeout(() => location.reload(), 3000);
+                    }
                 }
             });
     }
@@ -541,13 +564,36 @@ function startWorker() {
     if (confirm('Are you sure you want to add a new worker to the cluster?\n\nThis will:\n• Add a new worker to increase processing capacity\n• Update the cluster configuration\n• The worker will start processing tasks immediately')) {
         showNotification('Adding new worker to cluster...', 'info', 5000);
         makeApiCall('/api/v1/system/start-worker')
-            .then(result => {
+            .then(async result => {
                 showNotification(result.message, result.success ? 'success' : 'danger');
                 if (result.success) {
-                    // Refresh the page after a short delay to show updated cluster state
-                    setTimeout(() => {
-                        location.reload();
-                    }, 2000);
+                    // Immediately refresh data and then poll briefly until the new worker appears
+                    try {
+                        await refreshData();
+                        const startTime = Date.now();
+                        const timeoutMs = 20000; // 20s max wait
+                        let initialCount = (window.__lastWorkersCount ?? null);
+
+                        // Capture current count from DOM
+                        const countFromDom = () => document.querySelectorAll('#workersTableBody tr').length;
+                        if (initialCount === null) initialCount = countFromDom();
+
+                        const poll = async () => {
+                            await refreshData();
+                            const current = countFromDom();
+                            if (current > initialCount) return true;
+                            if (Date.now() - startTime > timeoutMs) return false;
+                            return new Promise(resolve => setTimeout(async () => resolve(await poll()), 2000));
+                        };
+
+                        const appeared = await poll();
+                        if (!appeared) {
+                            showNotification('Worker added, waiting for cluster to recognize it...', 'warning');
+                        }
+                    } catch (_) {
+                        // Fallback: soft reload if anything goes wrong
+                        setTimeout(() => location.reload(), 3000);
+                    }
                 }
             });
     }
