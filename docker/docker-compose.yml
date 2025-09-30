@@ -79,9 +79,23 @@ services:
 
   worker1:
     <<: *worker-config
+    environment:
+      <<: *common-vars
+      RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+      TMP_PATH: "/tmp/mapreduce"
+      MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+      MAPREDUCE_WORKER_MAX_RETRIES: "10"
+      WORKER_ID: "worker-1"
 
   worker2:
     <<: *worker-config
+    environment:
+      <<: *common-vars
+      RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+      TMP_PATH: "/tmp/mapreduce"
+      MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+      MAPREDUCE_WORKER_MAX_RETRIES: "10"
+      WORKER_ID: "worker-2"
 
   dashboard:
     build:
@@ -96,6 +110,7 @@ services:
     volumes:
       - intermediate-data:/tmp/mapreduce
       - ./data:/root/data:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234"
       RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"

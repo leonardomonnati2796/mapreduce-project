@@ -19,7 +19,7 @@ FROM alpine:latest
 WORKDIR /root/
 
 # Installa ca-certificates per HTTPS
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates docker-cli bash
 
 COPY --from=builder /app/mapreduce .
 COPY --from=builder /app/data ./data
