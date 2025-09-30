@@ -27,7 +27,7 @@ if %errorlevel% neq 0 (
 
 REM Verifica se il dashboard è in esecuzione
 echo Verificando stato del dashboard...
-powershell -Command "try { $response = Invoke-WebRequest -Uri '%DASHBOARD_URL%' -UseBasicParsing -TimeoutSec 5; if ($response.StatusCode -eq 200) { Write-Host 'Dashboard attivo su %DASHBOARD_URL%' -ForegroundColor Green } else { Write-Host 'Dashboard risponde ma con status:' $response.StatusCode -ForegroundColor Yellow } } catch { Write-Host 'Dashboard non raggiungibile su %DASHBOARD_URL%' -ForegroundColor Red; Write-Host ''; Write-Host 'POSSIBILI SOLUZIONI:' -ForegroundColor Yellow; Write-Host '1. Avvia il dashboard con: .\mapreduce-dashboard.exe dashboard' -ForegroundColor Cyan; Write-Host '2. Verifica che la porta %PORT% sia libera' -ForegroundColor Cyan; Write-Host '3. Controlla che il firewall non blocchi la connessione' -ForegroundColor Cyan; Write-Host ''; $choice = Read-Host 'Vuoi comunque aprire il browser? (s/n)'; if ($choice -notmatch '^[sS]') { Write-Host 'Operazione annullata.' -ForegroundColor Yellow; exit 1 } }"
+powershell -Command "try { $response = Invoke-WebRequest -Uri '%DASHBOARD_URL%' -UseBasicParsing -TimeoutSec 5; if ($response.StatusCode -eq 200) { Write-Host 'Dashboard attivo su %DASHBOARD_URL%' -ForegroundColor Green } else { Write-Host 'Dashboard risponde ma con status:' $response.StatusCode -ForegroundColor Yellow } } catch { Write-Host 'Dashboard non raggiungibile su %DASHBOARD_URL%' -ForegroundColor Red; Write-Host ''; Write-Host 'POSSIBILI SOLUZIONI:' -ForegroundColor Yellow; Write-Host '1. Avvia il cluster con: make start' -ForegroundColor Cyan; Write-Host '2. Verifica che la porta %PORT% sia libera' -ForegroundColor Cyan; Write-Host '3. Controlla che il firewall non blocchi la connessione' -ForegroundColor Cyan; Write-Host ''; $choice = Read-Host 'Vuoi comunque aprire il browser? (s/n)'; if ($choice -notmatch '^[sS]') { Write-Host 'Operazione annullata.' -ForegroundColor Yellow; exit 1 } }"
 
 if %errorlevel% neq 0 (
     echo.
@@ -60,10 +60,10 @@ if %errorlevel% equ 0 (
     echo.
     echo COMANDI UTILI:
     echo Terminale:
-    echo   .\mapreduce-dashboard.exe dashboard
-    echo   .\mapreduce-dashboard.exe elect-leader
-    echo   .\mapreduce-dashboard.exe master 0 file.txt
-    echo   .\mapreduce-dashboard.exe worker
+    echo   make start
+    echo   make dashboard
+    echo   make stop
+    echo   make status
     echo.
     echo Dashboard aperto con successo! 🚀
 ) else (

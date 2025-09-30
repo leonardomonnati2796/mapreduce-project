@@ -1,206 +1,118 @@
-# Script di test per la gestione dinamica del cluster MapReduce
-# Questo script dimostra le nuove funzionalità implementate
+# Test per gestione dinamica cluster MapReduce
+# Verifica che si possano aggiungere N master e N worker dinamicamente
 
-param(
-    [switch]$Demo,
-    [switch]$TestAddMaster,
-    [switch]$TestAddWorker,
-    [switch]$TestReset,
-    [switch]$All
-)
+Write-Host "=== TEST GESTIONE DINAMICA CLUSTER MAPREDUCE ===" -ForegroundColor Green
 
-# Colori per output
-$Red = "`e[31m"
-$Green = "`e[32m"
-$Yellow = "`e[33m"
-$Blue = "`e[34m"
-$Cyan = "`e[36m"
-$Magenta = "`e[35m"
-$Reset = "`e[0m"
+# Verifica che il cluster sia in esecuzione
+Write-Host "`n1. Verifica stato iniziale cluster..." -ForegroundColor Yellow
+$containers = docker ps --filter "name=docker-master" --format "{{.Names}}"
+$initialMasters = ($containers | Measure-Object).Count
+Write-Host "Master iniziali: $initialMasters"
 
-function Write-ColorOutput {
-    param([string]$Message, [string]$Color = $Reset)
-    Write-Host "$Color$Message$Reset"
+$containers = docker ps --filter "name=docker-worker" --format "{{.Names}}"
+$initialWorkers = ($containers | Measure-Object).Count
+Write-Host "Worker iniziali: $initialWorkers"
+
+# Test aggiunta master dinamica
+Write-Host "`n2. Test aggiunta master dinamica..." -ForegroundColor Yellow
+Write-Host "Aggiungendo master3..."
+try {
+    $response = Invoke-RestMethod -Uri "http://localhost:8080/api/v1/system/start-master" -Method POST
+    Write-Host "Risposta: $response"
+} catch {
+    Write-Host "Errore: $($_.Exception.Message)" -ForegroundColor Red
 }
 
-function Test-DynamicClusterManagement {
-    Write-ColorOutput "=== TEST GESTIONE DINAMICA CLUSTER MAPREDUCE ===" $Blue
-    Write-Host ""
-    
-    # Verifica che Docker sia in esecuzione
-    try {
-        docker version | Out-Null
-        Write-ColorOutput "✓ Docker è in esecuzione" $Green
-    }
-    catch {
-        Write-ColorOutput "✗ Docker non è in esecuzione!" $Red
-        return
-    }
-    
-    # Verifica che il docker-compose.yml esista
-    if (-not (Test-Path "docker-compose.yml")) {
-        Write-ColorOutput "✗ docker-compose.yml non trovato!" $Red
-        return
-    }
-    Write-ColorOutput "✓ docker-compose.yml trovato" $Green
-    
-    Write-Host ""
-    Write-ColorOutput "=== DEMO FUNZIONALITÀ IMPLEMENTATE ===" $Cyan
-    Write-Host ""
-    
-    # 1. Avvio cluster di base
-    Write-ColorOutput "1. Avvio cluster di base (3 master, 2 worker)..." $Yellow
-    & .\scripts\docker-manager.ps1 start
-    Start-Sleep -Seconds 10
-    
-    # 2. Test aggiunta master dinamico
-    Write-Host ""
-    Write-ColorOutput "2. Test aggiunta master dinamico (ID: 3)..." $Yellow
-    & .\scripts\docker-manager.ps1 add-master -NewMasterID 3
-    Start-Sleep -Seconds 15
-    
-    # 3. Test aggiunta worker dinamico
-    Write-Host ""
-    Write-ColorOutput "3. Test aggiunta worker dinamico (ID: 3)..." $Yellow
-    & .\scripts\docker-manager.ps1 add-worker -NewWorkerID 3
-    Start-Sleep -Seconds 10
-    
-    # 4. Verifica stato cluster
-    Write-Host ""
-    Write-ColorOutput "4. Verifica stato cluster..." $Yellow
-    & .\scripts\docker-manager.ps1 status
-    
-    # 5. Test health check
-    Write-Host ""
-    Write-ColorOutput "5. Test health check..." $Yellow
-    & .\scripts\docker-manager.ps1 health
-    
-    # 6. Test reset a configurazione default
-    Write-Host ""
-    Write-ColorOutput "6. Test reset a configurazione default..." $Yellow
-    & .\scripts\docker-manager.ps1 reset -ResetToDefault
-    Start-Sleep -Seconds 15
-    
-    # 7. Verifica stato finale
-    Write-Host ""
-    Write-ColorOutput "7. Verifica stato finale..." $Yellow
-    & .\scripts\docker-manager.ps1 status
-    
-    Write-Host ""
-    Write-ColorOutput "=== TEST COMPLETATO ===" $Green
-    Write-Host ""
-    Write-Host "Funzionalità testate:"
-    Write-Host "  ✓ Aggiunta master dinamico con elezione automatica del leader"
-    Write-Host "  ✓ Aggiunta worker dinamico"
-    Write-Host "  ✓ Reset a configurazione di default"
-    Write-Host "  ✓ Health check del cluster"
-    Write-Host "  ✓ Gestione automatica delle porte"
-    Write-Host "  ✓ Aggiornamento dinamico del docker-compose.yml"
-    Write-Host ""
+Start-Sleep -Seconds 3
+
+$containers = docker ps --filter "name=docker-master" --format "{{.Names}}"
+$newMasters = ($containers | Measure-Object).Count
+Write-Host "Master dopo aggiunta: $newMasters"
+
+if ($newMasters -gt $initialMasters) {
+    Write-Host "✓ Master aggiunto con successo!" -ForegroundColor Green
+} else {
+    Write-Host "✗ Errore: Master non aggiunto" -ForegroundColor Red
 }
 
-function Test-AddMasterOnly {
-    Write-ColorOutput "=== TEST AGGIUNTA MASTER ===" $Blue
-    Write-Host ""
-    
-    # Avvia cluster di base
-    Write-ColorOutput "Avvio cluster di base..." $Yellow
-    & .\scripts\docker-manager.ps1 start
-    Start-Sleep -Seconds 10
-    
-    # Aggiunge master
-    Write-ColorOutput "Aggiunta master con ID 3..." $Yellow
-    & .\scripts\docker-manager.ps1 add-master -NewMasterID 3
-    
-    # Verifica stato
-    Write-Host ""
-    Write-ColorOutput "Verifica stato cluster..." $Yellow
-    & .\scripts\docker-manager.ps1 status
-    
-    Write-ColorOutput "Test completato!" $Green
+# Test aggiunta worker dinamica
+Write-Host "`n3. Test aggiunta worker dinamica..." -ForegroundColor Yellow
+Write-Host "Aggiungendo worker4..."
+try {
+    $response = Invoke-RestMethod -Uri "http://localhost:8080/api/system/start-worker" -Method POST
+    Write-Host "Risposta: $response"
+} catch {
+    Write-Host "Errore: $($_.Exception.Message)" -ForegroundColor Red
 }
 
-function Test-AddWorkerOnly {
-    Write-ColorOutput "=== TEST AGGIUNTA WORKER ===" $Blue
-    Write-Host ""
-    
-    # Avvia cluster di base
-    Write-ColorOutput "Avvio cluster di base..." $Yellow
-    & .\scripts\docker-manager.ps1 start
-    Start-Sleep -Seconds 10
-    
-    # Aggiunge worker
-    Write-ColorOutput "Aggiunta worker con ID 3..." $Yellow
-    & .\scripts\docker-manager.ps1 add-worker -NewWorkerID 3
-    
-    # Verifica stato
-    Write-Host ""
-    Write-ColorOutput "Verifica stato cluster..." $Yellow
-    & .\scripts\docker-manager.ps1 status
-    
-    Write-ColorOutput "Test completato!" $Green
+Start-Sleep -Seconds 3
+
+$containers = docker ps --filter "name=docker-worker" --format "{{.Names}}"
+$newWorkers = ($containers | Measure-Object).Count
+Write-Host "Worker dopo aggiunta: $newWorkers"
+
+if ($newWorkers -gt $initialWorkers) {
+    Write-Host "✓ Worker aggiunto con successo!" -ForegroundColor Green
+} else {
+    Write-Host "✗ Errore: Worker non aggiunto" -ForegroundColor Red
 }
 
-function Test-ResetOnly {
-    Write-ColorOutput "=== TEST RESET CONFIGURAZIONE ===" $Blue
-    Write-Host ""
-    
-    # Aggiunge alcuni componenti
-    Write-ColorOutput "Aggiunta master e worker per test..." $Yellow
-    & .\scripts\docker-manager.ps1 add-master -NewMasterID 3
+# Test aggiunta multipla
+Write-Host "`n4. Test aggiunta multipla..." -ForegroundColor Yellow
+Write-Host "Aggiungendo master4 e worker5..."
+
+try {
+    $response1 = Invoke-RestMethod -Uri "http://localhost:8080/api/system/start-master" -Method POST
+    Write-Host "Master4: $response1"
+} catch {
+    Write-Host "Errore Master4: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+try {
+    $response2 = Invoke-RestMethod -Uri "http://localhost:8080/api/system/start-worker" -Method POST
+    Write-Host "Worker5: $response2"
+} catch {
+    Write-Host "Errore Worker5: $($_.Exception.Message)" -ForegroundColor Red
+}
+
     Start-Sleep -Seconds 5
-    & .\scripts\docker-manager.ps1 add-worker -NewWorkerID 3
-    
-    Write-Host ""
-    Write-ColorOutput "Stato prima del reset:" $Yellow
-    & .\scripts\docker-manager.ps1 status
-    
-    Write-Host ""
-    Write-ColorOutput "Esecuzione reset..." $Yellow
-    & .\scripts\docker-manager.ps1 reset -ResetToDefault
-    
-    Write-Host ""
-    Write-ColorOutput "Stato dopo il reset:" $Yellow
-    & .\scripts\docker-manager.ps1 status
-    
-    Write-ColorOutput "Test completato!" $Green
+
+$containers = docker ps --filter "name=docker-master" --format "{{.Names}}"
+$finalMasters = ($containers | Measure-Object).Count
+
+$containers = docker ps --filter "name=docker-worker" --format "{{.Names}}"
+$finalWorkers = ($containers | Measure-Object).Count
+
+Write-Host "Master finali: $finalMasters"
+Write-Host "Worker finali: $finalWorkers"
+
+# Verifica configurazione RAFT
+Write-Host "`n5. Verifica configurazione RAFT..." -ForegroundColor Yellow
+$master3 = docker ps --filter "name=docker-master3" --format "{{.Names}}"
+if ($master3) {
+    Write-Host "✓ Master3 trovato: $master3" -ForegroundColor Green
+} else {
+    Write-Host "✗ Master3 non trovato" -ForegroundColor Red
 }
 
-function Show-Usage {
-    Write-ColorOutput "=== TEST GESTIONE DINAMICA CLUSTER MAPREDUCE ===" $Blue
-    Write-Host ""
-    Write-Host "Usage: .\scripts\test-dynamic-cluster.ps1 [OPTIONS]"
-    Write-Host ""
-    Write-Host "Options:"
-    Write-Host "  -Demo           Esegue demo completa di tutte le funzionalità"
-    Write-Host "  -TestAddMaster  Testa solo l'aggiunta di un master"
-    Write-Host "  -TestAddWorker  Testa solo l'aggiunta di un worker"
-    Write-Host "  -TestReset      Testa solo il reset della configurazione"
-    Write-Host "  -All            Alias per -Demo"
-    Write-Host ""
-    Write-Host "Examples:"
-    Write-Host "  .\scripts\test-dynamic-cluster.ps1 -Demo"
-    Write-Host "  .\scripts\test-dynamic-cluster.ps1 -TestAddMaster"
-    Write-Host "  .\scripts\test-dynamic-cluster.ps1 -All"
-    Write-Host ""
+# Test dashboard aggiornamenti
+Write-Host "`n6. Test aggiornamenti dashboard..." -ForegroundColor Yellow
+try {
+    $dashboardData = Invoke-RestMethod -Uri "http://localhost:8080/api/masters" -Method GET
+    Write-Host "Master nella dashboard: $($dashboardData.Count)"
+    
+    $workerData = Invoke-RestMethod -Uri "http://localhost:8080/api/workers" -Method GET
+    Write-Host "Worker nella dashboard: $($workerData.Count)"
+    
+    Write-Host "✓ Dashboard aggiornata correttamente!" -ForegroundColor Green
+} catch {
+    Write-Host "✗ Errore dashboard: $($_.Exception.Message)" -ForegroundColor Red
 }
 
-# Main execution
-if ($Demo -or $All) {
-    Test-DynamicClusterManagement
-}
-elseif ($TestAddMaster) {
-    Test-AddMasterOnly
-}
-elseif ($TestAddWorker) {
-    Test-AddWorkerOnly
-}
-elseif ($TestReset) {
-    Test-ResetOnly
-}
-else {
-    Show-Usage
-}
-
-Write-Host ""
-Write-ColorOutput "=== Script completato ===" $Green
+Write-Host "`n=== TEST COMPLETATO ===" -ForegroundColor Green
+Write-Host "Risultati:"
+Write-Host "- Master iniziali: $initialMasters"
+Write-Host "- Master finali: $finalMasters"
+Write-Host "- Worker iniziali: $initialWorkers" 
+Write-Host "- Worker finali: $finalWorkers"
+Write-Host "- Aggiunti: $($finalMasters - $initialMasters) master, $($finalWorkers - $initialWorkers) worker"

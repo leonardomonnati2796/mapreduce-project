@@ -31,8 +31,7 @@ help:
 	@echo "  make health       - Controlla la salute del cluster"
 	@echo "  make test         - Esegue test di fault tolerance"
 	@echo "  make dashboard    - Apre il dashboard nel browser"
-	@echo "  make dashboard-local - Avvia il dashboard in locale (abilita i controlli)"
-	@echo "  make open-html    - Apre una pagina HTML locale (PAGE=percorso)"
+	@echo "  make open-html    - Apre il dashboard nel browser"
 	@echo ""
 	@echo "TEST FAULT TOLERANCE SPECIFICI:"
 	@echo "  make fault-test   - Test completo di fault tolerance"
@@ -98,17 +97,11 @@ test:
 dashboard:
 	$(DOCKER_MANAGER) dashboard
 
-# Avvia il dashboard localmente (fuori da Docker) per abilitare i controlli di sistema
-dashboard-local:
-	@echo "Avvio dashboard locale..."
-	@powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath .\mapreduce-dashboard.exe -ArgumentList 'dashboard'; Start-Sleep -Seconds 2; & scripts/open-dashboard.ps1 -Quick"
 
-# Apre una pagina HTML locale nel browser di default
-# Utilizzo: make open-html PAGE=web/templates/index.html
-PAGE ?= web/templates/index.html
+# Apre il dashboard nel browser
 open-html:
-	@echo "Apertura pagina HTML: $(PAGE)"
-	@powershell -NoProfile -Command "$p = Resolve-Path '$(PAGE)'; Start-Process $p"
+	@echo "Apertura dashboard nel browser..."
+	@powershell -NoProfile -Command "Start-Process 'http://localhost:8080'"
 
 # Test fault tolerance specifici
 fault-test:
@@ -254,9 +247,5 @@ report:
 	@cd report && pdflatex -interaction=nonstopmode report.tex >/dev/null && pdflatex -interaction=nonstopmode report.tex >/dev/null
 	@echo "Report generated at report/report.pdf"
 
-# Build locale per sviluppo (opzionale)
-build-local:
-	go build -o mapreduce ./src
-	go build -o cli.exe ./cmd/cli
 
 

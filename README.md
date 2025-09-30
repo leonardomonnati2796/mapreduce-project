@@ -139,12 +139,14 @@ mapreduce-project/
 
 ## 🎯 Flusso di Lavoro Tipico
 
-1. **🚀 Avvio**: `make start` - Avvia il cluster completo
+1. **🚀 Avvio**: `make start` - Avvia il cluster completo tramite Docker
 2. **📊 Monitoraggio**: `make status` - Verifica stato cluster
-3. **👀 Osservazione**: Accedi a http://localhost:8080 per dashboard
+3. **👀 Osservazione**: Accedi a http://localhost:8080 per dashboard con WebSocket real-time
 4. **🧪 Test**: `make test` - Verifica fault tolerance
 5. **📁 Risultati**: File di output in `data/output/`
 6. **🧹 Pulizia**: `make clean` - Pulisce tutto
+
+⚠️ **IMPORTANTE**: Questo progetto funziona **esclusivamente con Docker**. Non ci sono eseguibili locali.
 
 ## 🌐 Accesso ai Servizi
 
@@ -160,15 +162,6 @@ Dopo l'avvio del cluster:
 
 ## 🔧 Sviluppo
 
-### Build Locale
-```bash
-# Build senza Docker
-make build-local
-
-# Build specifico
-go build -o mapreduce ./src
-go build -o cli.exe ./cmd/cli
-```
 
 ### Configurazione
 Il sistema utilizza variabili d'ambiente per la configurazione:

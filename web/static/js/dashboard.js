@@ -6,11 +6,20 @@ let isAutoRefreshEnabled = true;
 let showAllWorkers = false;
 const DEFAULT_WORKERS_LIMIT = 20;
 
+// WebSocket variables
+let websocket = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 3000; // 3 seconds
+
 // Initialize dashboard
 function initDashboard() {
     console.log('Initializing MapReduce Dashboard...');
     
-    // Start auto-refresh
+    // Initialize WebSocket connection
+    initWebSocket();
+    
+    // Start auto-refresh (will be disabled when WebSocket is active)
     startAutoRefresh();
     
     // Add fade-in animations
@@ -25,14 +34,174 @@ function initDashboard() {
     console.log('Dashboard initialized successfully');
 }
 
-// Auto-refresh functionality
+// ===== WEBSOCKET FUNCTIONS =====
+
+// Initialize WebSocket connection
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    try {
+        websocket = new WebSocket(wsUrl);
+        
+        websocket.onopen = function(event) {
+            console.log('WebSocket connected');
+            reconnectAttempts = 0;
+            
+            // Disable auto-refresh when WebSocket is active
+            stopAutoRefresh();
+            
+            // Update real-time indicator
+            const indicator = document.querySelector('.real-time-indicator');
+            if (indicator) {
+                indicator.innerHTML = '<i class="fas fa-circle"></i> Live Data (WebSocket)';
+                indicator.style.opacity = '1';
+            }
+        };
+        
+        websocket.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            } catch (error) {
+                console.error('Error parsing WebSocket message:', error);
+            }
+        };
+        
+        websocket.onclose = function(event) {
+            console.log('WebSocket disconnected');
+            
+            // Update real-time indicator
+            const indicator = document.querySelector('.real-time-indicator');
+            if (indicator) {
+                indicator.innerHTML = '<i class="fas fa-circle"></i> Disconnected';
+                indicator.style.opacity = '0.5';
+            }
+            
+            // Attempt to reconnect
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                setTimeout(() => {
+                    reconnectAttempts++;
+                    console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                    initWebSocket();
+                }, RECONNECT_DELAY);
+            } else {
+                console.log('Max reconnection attempts reached. Falling back to polling.');
+                // Fallback to auto-refresh
+                startAutoRefresh();
+            }
+        };
+        
+        websocket.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+        
+    } catch (error) {
+        console.error('Failed to initialize WebSocket:', error);
+        // Fallback to auto-refresh
+        startAutoRefresh();
+    }
+}
+
+// Handle WebSocket messages
+function handleWebSocketMessage(data) {
+    console.log('Received WebSocket message:', data.type);
+    
+    switch (data.type) {
+        case 'initial_data':
+            handleInitialData(data.data);
+            break;
+        case 'realtime_update':
+            handleRealtimeUpdate(data.data);
+            break;
+        case 'master_added':
+        case 'worker_added':
+        case 'system_stopped':
+        case 'cluster_restarted':
+        case 'leader_elected':
+            handleSystemNotification(data.type, data.data);
+            break;
+        default:
+            console.log('Unknown message type:', data.type);
+    }
+}
+
+// Handle initial data from WebSocket
+function handleInitialData(data) {
+    console.log('Received initial data from WebSocket');
+    
+    // Update all dashboard components
+    if (data.masters) {
+        updateMastersTable(data.masters);
+    }
+    if (data.workers) {
+        window.__lastWorkersData = data.workers;
+        updateWorkersTable(data.workers);
+    }
+    if (data.health) {
+        updateHealthIndicators(data.health);
+    }
+    
+    // Update last update time
+    const now = new Date();
+    const lastUpdateElement = document.getElementById('lastUpdate');
+    if (lastUpdateElement) {
+        lastUpdateElement.textContent = now.toLocaleTimeString();
+    }
+}
+
+// Handle real-time updates from WebSocket
+function handleRealtimeUpdate(data) {
+    console.log('Received real-time update from WebSocket');
+    
+    // Update tables with new data
+    if (data.masters) {
+        updateMastersTable(data.masters);
+    }
+    if (data.workers) {
+        window.__lastWorkersData = data.workers;
+        updateWorkersTable(data.workers);
+    }
+    if (data.health) {
+        updateHealthIndicators(data.health);
+    }
+    
+    // Update last update time
+    const now = new Date();
+    const lastUpdateElement = document.getElementById('lastUpdate');
+    if (lastUpdateElement) {
+        lastUpdateElement.textContent = now.toLocaleTimeString();
+    }
+}
+
+// Handle system notifications
+function handleSystemNotification(type, data) {
+    console.log(`Received system notification: ${type}`, data);
+    
+    // Show notification to user
+    const message = data.message || `System event: ${type}`;
+    showNotification(message, 'info', 5000);
+    
+    // Force refresh of data after a short delay
+    setTimeout(() => {
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+            // WebSocket is active, data will come automatically
+            return;
+        } else {
+            // Fallback to manual refresh
+            refreshData();
+        }
+    }, 2000);
+}
+
+// Auto-refresh functionality (fallback when WebSocket is not available)
 function startAutoRefresh() {
     if (refreshInterval) {
         clearInterval(refreshInterval);
     }
     
     refreshInterval = setInterval(() => {
-        if (isAutoRefreshEnabled) {
+        if (isAutoRefreshEnabled && (!websocket || websocket.readyState !== WebSocket.OPEN)) {
             refreshData();
         }
     }, 30000); // 30 seconds

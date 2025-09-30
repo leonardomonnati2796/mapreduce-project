@@ -519,12 +519,23 @@ switch ($Action.ToLower()) {
     }
     "add-worker" {
         Write-ColorOutput "=== AGGIUNTA WORKER ===" "Cyan"
-        $candidates = @("worker1", "worker2")
-        $started = $false
-        foreach ($svc in $candidates) {
-            if (Start-ServiceIfStopped -Service $svc) { $started = $true; break }
+        # Cerca il prossimo servizio workerN disponibile definito nel compose
+        $services = @(docker-compose -f docker/docker-compose.yml config --services 2>$null) | Where-Object { $_ -match '^worker\d+$' }
+        if (-not $services -or $services.Count -eq 0) { $services = @("worker1","worker2","worker3") }
+        $running = Get-RunningServices
+        $next = $null
+        foreach ($s in ($services | Sort-Object {[int]($_ -replace 'worker','')})) {
+            if ($running -notcontains $s) { $next = $s; break }
         }
-        if (-not $started) { Write-ColorOutput "Nessun worker aggiunto (tutti gia attivi)" "Yellow" }
+        if ($null -eq $next) {
+            Write-ColorOutput "Nessun worker disponibile nel compose (tutti attivi)." "Yellow"
+        } else {
+            if (Start-ServiceIfStopped -Service $next) {
+                Write-ColorOutput "Worker avviato: $next" "Green"
+            } else {
+                Write-ColorOutput "Errore avvio worker: $next" "Red"
+            }
+        }
     }
     default {
         Write-ColorOutput "Azione non riconosciuta: $Action" "Red"

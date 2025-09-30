@@ -24,5 +24,6 @@ RUN apk --no-cache add ca-certificates docker-cli bash
 COPY --from=builder /app/mapreduce .
 COPY --from=builder /app/data ./data
 COPY --from=builder /app/web ./web
+COPY --from=builder /app/scripts ./scripts
 
 CMD ["./mapreduce"]

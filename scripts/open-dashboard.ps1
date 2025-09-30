@@ -70,12 +70,12 @@ try {
 } catch {
     if ($Quick) {
         Write-Host "Dashboard non raggiungibile" -ForegroundColor Yellow
-        Write-Host "Avvia il dashboard con: .\mapreduce-dashboard.exe dashboard" -ForegroundColor Cyan
+        Write-Host "Avvia il cluster con: make start" -ForegroundColor Cyan
     } else {
         Write-Host "Dashboard non raggiungibile su $DashboardUrl" -ForegroundColor Red
         Write-Host ""
         Write-Host "POSSIBILI SOLUZIONI:" -ForegroundColor Yellow
-        Write-Host "1. Avvia il dashboard con: .\mapreduce-dashboard.exe dashboard" -ForegroundColor Cyan
+        Write-Host "1. Avvia il cluster con: make start" -ForegroundColor Cyan
         Write-Host "2. Verifica che la porta $Port sia libera" -ForegroundColor Cyan
         Write-Host "3. Controlla che il firewall non blocchi la connessione" -ForegroundColor Cyan
         Write-Host ""
@@ -117,10 +117,10 @@ try {
 if ($Quick) {
     Write-Host ""
     Write-Host "Per avviare il dashboard:" -ForegroundColor Yellow
-    Write-Host "   .\mapreduce-dashboard.exe dashboard" -ForegroundColor White
+    Write-Host "   make start" -ForegroundColor White
     Write-Host ""
-    Write-Host "Per elezione leader:" -ForegroundColor Yellow
-    Write-Host "   .\mapreduce-dashboard.exe elect-leader" -ForegroundColor White
+    Write-Host "Per aprire la dashboard:" -ForegroundColor Yellow
+    Write-Host "   make dashboard" -ForegroundColor White
 } else {
     Write-Host ""
     Write-Host "=== INFORMAZIONI DASHBOARD ===" -ForegroundColor Green
@@ -151,10 +151,10 @@ if ($Quick) {
 
     Write-Host "=== COMANDI UTILI ===" -ForegroundColor Green
     Write-Host "Terminale:" -ForegroundColor Yellow
-    Write-Host "  .\mapreduce-dashboard.exe dashboard          # Avvia dashboard" -ForegroundColor Cyan
-    Write-Host "  .\mapreduce-dashboard.exe elect-leader      # Elezione leader" -ForegroundColor Cyan
-    Write-Host "  .\mapreduce-dashboard.exe master 0 file.txt  # Avvia master" -ForegroundColor Cyan
-    Write-Host "  .\mapreduce-dashboard.exe worker             # Avvia worker" -ForegroundColor Cyan
+    Write-Host "  make start          # Avvia il cluster" -ForegroundColor Cyan
+    Write-Host "  make dashboard       # Apre la dashboard" -ForegroundColor Cyan
+    Write-Host "  make stop            # Ferma il cluster" -ForegroundColor Cyan
+    Write-Host "  make status          # Mostra lo stato" -ForegroundColor Cyan
     Write-Host ""
 
     Write-Host "API REST:" -ForegroundColor Yellow

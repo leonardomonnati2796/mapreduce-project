@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/rpc"
@@ -9,11 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -43,6 +46,11 @@ type Dashboard struct {
 	router        *gin.Engine
 	startTime     time.Time
 	mu            sync.RWMutex
+	// WebSocket support
+	upgrader     websocket.Upgrader
+	clients      map[*websocket.Conn]bool
+	clientsMutex sync.RWMutex
+	broadcast    chan []byte
 }
 
 // DashboardData contiene i dati per il dashboard
@@ -110,9 +118,19 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		metrics:       metrics,
 		router:        gin.Default(),
 		startTime:     time.Now(),
+		// WebSocket initialization
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true // Allow all origins for development
+			},
+		},
+		clients:   make(map[*websocket.Conn]bool),
+		broadcast: make(chan []byte),
 	}
 
 	d.setupRoutes()
+	go d.handleWebSocketMessages()
+	go d.startRealTimeUpdates()
 	return d, nil
 }
 
@@ -155,6 +173,9 @@ func (d *Dashboard) setupRoutes() {
 		// Text processing endpoints
 		api.POST("/text/process", d.processText)
 	}
+
+	// WebSocket endpoint
+	d.router.GET("/ws", d.handleWebSocket)
 
 	// Web routes
 	d.router.GET("/", d.getIndex)
@@ -859,6 +880,9 @@ func (d *Dashboard) restartWorker(c *gin.Context) {
 
 // startMaster avvia un nuovo master
 func (d *Dashboard) startMaster(c *gin.Context) {
+	// Conta i master prima
+	before, _ := d.getMastersData()
+
 	// Chiama il docker-manager.ps1 per aggiungere un nuovo master
 	result, err := d.executeDockerManagerCommand("add-master")
 	if err != nil {
@@ -870,9 +894,37 @@ func (d *Dashboard) startMaster(c *gin.Context) {
 		return
 	}
 
+	// Verifica con polling che il nuovo master si registri davvero
+	deadline := time.Now().Add(20 * time.Second)
+	increased := false
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		after, _ := d.getMastersData()
+		if len(after) > len(before) {
+			increased = true
+			break
+		}
+	}
+
+	if !increased {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"message": "Master start command executed, but cluster did not report a new master within timeout",
+			"action":  "start_master",
+			"output":  result,
+		})
+		return
+	}
+
+	// Invia notifica WebSocket
+	d.broadcastCustomUpdate("master_added", map[string]interface{}{
+		"message": "New master added to cluster",
+		"output":  result,
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
-		"message":   "New master added successfully",
+		"message":   "New master added and detected by cluster",
 		"action":    "start_master",
 		"output":    result,
 		"timestamp": time.Now(),
@@ -881,6 +933,9 @@ func (d *Dashboard) startMaster(c *gin.Context) {
 
 // startWorker avvia un nuovo worker
 func (d *Dashboard) startWorker(c *gin.Context) {
+	// Conta i worker prima
+	before, _ := d.getWorkersData()
+
 	// Chiama il docker-manager.ps1 per aggiungere un nuovo worker
 	result, err := d.executeDockerManagerCommand("add-worker")
 	if err != nil {
@@ -892,9 +947,37 @@ func (d *Dashboard) startWorker(c *gin.Context) {
 		return
 	}
 
+	// Verifica con polling che il nuovo worker si registri davvero
+	deadline := time.Now().Add(20 * time.Second)
+	increased := false
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		after, _ := d.getWorkersData()
+		if len(after) > len(before) {
+			increased = true
+			break
+		}
+	}
+
+	if !increased {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"message": "Worker start command executed, but no new worker registered within timeout",
+			"action":  "start_worker",
+			"output":  result,
+		})
+		return
+	}
+
+	// Invia notifica WebSocket
+	d.broadcastCustomUpdate("worker_added", map[string]interface{}{
+		"message": "New worker added to cluster",
+		"output":  result,
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
-		"message":   "New worker added successfully",
+		"message":   "New worker added and detected by cluster",
 		"action":    "start_worker",
 		"output":    result,
 		"timestamp": time.Now(),
@@ -913,6 +996,12 @@ func (d *Dashboard) stopAll(c *gin.Context) {
 		})
 		return
 	}
+
+	// Invia notifica WebSocket
+	d.broadcastCustomUpdate("system_stopped", map[string]interface{}{
+		"message": "All system components stopped",
+		"output":  result,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
@@ -935,6 +1024,12 @@ func (d *Dashboard) restartCluster(c *gin.Context) {
 		})
 		return
 	}
+
+	// Invia notifica WebSocket
+	d.broadcastCustomUpdate("cluster_restarted", map[string]interface{}{
+		"message": "Cluster restarted with default configuration",
+		"output":  result,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
@@ -1067,6 +1162,12 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 		"total_masters":       len(raftAddrs),
 		"transfer_successful": actualNewLeaderID != currentLeaderID,
 	}
+
+	// Invia notifica WebSocket
+	d.broadcastCustomUpdate("leader_elected", map[string]interface{}{
+		"message":     fmt.Sprintf("New leader elected: Master %d", actualNewLeaderID),
+		"leader_info": leaderInfo,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":     true,
@@ -1271,7 +1372,7 @@ func (d *Dashboard) processText(c *gin.Context) {
 		if d.config != nil {
 			tempDir = d.config.GetTempPath()
 		} else {
-			tempDir = "temp-local"
+			tempDir = "/tmp/mapreduce"
 		}
 	}
 
@@ -1466,137 +1567,407 @@ func (d *Dashboard) getOutputPath() string {
 	return basePath
 }
 
-// executeDockerManagerCommand esegue comandi del docker-manager.ps1
+// executeDockerManagerCommand esegue comandi Docker tramite script esterno
 func (d *Dashboard) executeDockerManagerCommand(action string) (string, error) {
-	// Trova il percorso del docker-manager.ps1
-	scriptPath := "scripts/docker-manager.ps1"
-	if _, err := os.Stat(scriptPath); err == nil {
-		// Usa PowerShell su host Windows quando disponibile
-		var cmd *exec.Cmd
-		switch action {
-		case "add-master":
-			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "add-master")
-		case "add-worker":
-			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "add-worker")
-		case "stop":
-			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "stop")
-		case "reset":
-			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "reset")
-		default:
-			return "", fmt.Errorf("unknown action: %s", action)
-		}
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return string(output), fmt.Errorf("command failed: %v, output: %s", err, string(output))
-		}
-		return string(output), nil
+	// Usa lo script bash per gestire Docker dal sistema host
+	scriptPath := "/root/scripts/docker-manager.sh"
+	
+	// Verifica se lo script esiste
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		// Fallback: usa comandi Docker diretti (potrebbe non funzionare nel container)
+		return d.executeDockerCommandDirect(action)
 	}
-
-	// Fallback in-container: usa docker CLI (richiede docker.sock montato)
-	// Helpers
-	run := func(name string, args ...string) (string, error) {
-		cmd := exec.Command(name, args...)
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
-	// Elenco container per nome
-	listAll, err := run("docker", "ps", "-a", "--format", "{{.Names}}")
+	
+	// Usa bash per eseguire lo script
+	cmd := exec.Command("bash", scriptPath, action)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return listAll, fmt.Errorf("docker ps -a failed: %v", err)
+		return string(output), fmt.Errorf("script execution failed: %v, output: %s", err, string(output))
 	}
-	listRun, err := run("docker", "ps", "--format", "{{.Names}}")
-	if err != nil {
-		return listRun, fmt.Errorf("docker ps failed: %v", err)
-	}
-	contains := func(haystack, needle string) bool { return strings.Contains(haystack, needle) }
-	isRunning := func(name string) bool { return contains(listRun, name) }
+	return string(output), nil
+}
 
-	// Candidati robusti per nomi container (compose v2 con '-' e v1 con '_')
-	masterCandidates := []string{"master1-1", "master2-1", "master1_1", "master2_1"}
-	workerCandidates := []string{"worker1-1", "worker2-1", "worker1_1", "worker2_1"}
-
+// executeDockerCommandDirect esegue comandi Docker direttamente (fallback)
+func (d *Dashboard) executeDockerCommandDirect(action string) (string, error) {
+	var cmd *exec.Cmd
+	
 	switch action {
 	case "add-master":
-		for _, suffix := range masterCandidates {
-			// Trova nome completo che termina con il suffisso
-			lines := strings.Split(listAll, "\n")
-			for _, n := range lines {
-				n = strings.TrimSpace(n)
-				if n == "" {
-					continue
-				}
-				if strings.HasSuffix(n, suffix) && !isRunning(n) {
-					out, err := run("docker", "start", n)
-					if err != nil {
-						return out, fmt.Errorf("failed to start %s: %v", n, err)
-					}
-					return fmt.Sprintf("started %s", n), nil
-				}
-			}
-		}
-		return "no stopped master to start", nil
+		// Trova il prossimo ID master disponibile
+		masterID := d.findNextMasterID()
+		return d.addDynamicMaster(masterID)
 	case "add-worker":
-		for _, suffix := range workerCandidates {
-			lines := strings.Split(listAll, "\n")
-			for _, n := range lines {
-				n = strings.TrimSpace(n)
-				if n == "" {
-					continue
-				}
-				if strings.HasSuffix(n, suffix) && !isRunning(n) {
-					out, err := run("docker", "start", n)
-					if err != nil {
-						return out, fmt.Errorf("failed to start %s: %v", n, err)
-					}
-					return fmt.Sprintf("started %s", n), nil
-				}
-			}
-		}
-		return "no stopped worker to start", nil
+		// Trova il prossimo ID worker disponibile
+		workerID := d.findNextWorkerID()
+		return d.addDynamicWorker(workerID)
 	case "stop":
-		// Ferma masters e workers, non fermare il dashboard stesso
-		stopped := []string{}
-		lines := strings.Split(listRun, "\n")
-		for _, n := range lines {
-			n = strings.TrimSpace(n)
-			if n == "" {
-				continue
-			}
-			if strings.Contains(n, "master") || strings.Contains(n, "worker") {
-				out, err := run("docker", "stop", n)
-				if err == nil {
-					stopped = append(stopped, n)
-				} else {
-					_ = out
-				}
-			}
-		}
-		return fmt.Sprintf("stopped: %v", stopped), nil
+		// Ferma tutti i container del cluster
+		cmd = exec.Command("docker", "compose", "-f", "docker/docker-compose.yml", "down")
 	case "reset":
-		// Ferma e riavvia i servizi di default
-		_, _ = d.executeDockerManagerCommand("stop")
-		// Avvia i default: master0/master1/master2/worker1/worker2
-		started := []string{}
-		targets := []string{"master0", "master1", "master2", "worker1", "worker2"}
-		// Trova nomi reali in base ai target
-		lines := strings.Split(listAll, "\n")
-		for _, t := range targets {
-			for _, n := range lines {
-				n = strings.TrimSpace(n)
-				if n == "" {
-					continue
-				}
-				if strings.Contains(n, t) {
-					_, err := run("docker", "start", n)
-					if err == nil {
-						started = append(started, n)
-						break
-					}
-				}
-			}
+		// Ferma e riavvia il cluster con sequenza stop + start
+		// Prima ferma tutto
+		stopCmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.yml", "down")
+		stopOutput, stopErr := stopCmd.CombinedOutput()
+		if stopErr != nil {
+			return string(stopOutput), fmt.Errorf("failed to stop cluster: %v, output: %s", stopErr, string(stopOutput))
 		}
-		return fmt.Sprintf("started: %v", started), nil
+		
+		// Poi riavvia
+		startCmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.yml", "up", "-d")
+		startOutput, startErr := startCmd.CombinedOutput()
+		if startErr != nil {
+			return string(startOutput), fmt.Errorf("failed to start cluster: %v, output: %s", startErr, string(startOutput))
+		}
+		
+		return fmt.Sprintf("Cluster restarted successfully. Stop output: %s\nStart output: %s", string(stopOutput), string(startOutput)), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
+	}
+	
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("command failed: %v, output: %s", err, string(output))
+	}
+	return string(output), nil
+}
+
+// findNextMasterID trova il prossimo ID master disponibile
+func (d *Dashboard) findNextMasterID() int {
+	// Conta i master esistenti
+	cmd := exec.Command("docker", "ps", "--filter", "name=docker-master", "--format", "{{.Names}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return 3 // Default al primo aggiuntivo
+	}
+
+	// Conta i master esistenti
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	maxID := 2 // master0, master1, master2 sono i default
+
+	for _, line := range lines {
+		if strings.Contains(line, "docker-master") {
+			// Estrai numero dal nome (es: docker-master3-1 -> 3)
+			parts := strings.Split(line, "master")
+			if len(parts) > 1 {
+				numStr := strings.Split(parts[1], "-")[0]
+				if num, err := strconv.Atoi(numStr); err == nil {
+					if num > maxID {
+						maxID = num
+					}
+				}
+			}
+		}
+	}
+
+	return maxID + 1
+}
+
+// findNextWorkerID trova il prossimo ID worker disponibile
+func (d *Dashboard) findNextWorkerID() int {
+	// Conta i worker esistenti
+	cmd := exec.Command("docker", "ps", "--filter", "name=docker-worker", "--format", "{{.Names}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return 4 // Default al primo aggiuntivo
+	}
+
+	// Conta i worker esistenti
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	maxID := 3 // worker1, worker2, worker3 sono i default
+
+	for _, line := range lines {
+		if strings.Contains(line, "docker-worker") {
+			// Estrai numero dal nome (es: docker-worker4-1 -> 4)
+			parts := strings.Split(line, "worker")
+			if len(parts) > 1 {
+				numStr := strings.Split(parts[1], "-")[0]
+				if num, err := strconv.Atoi(numStr); err == nil {
+					if num > maxID {
+						maxID = num
+					}
+				}
+			}
+		}
+	}
+
+	return maxID + 1
+}
+
+// addDynamicMaster aggiunge un master dinamicamente
+func (d *Dashboard) addDynamicMaster(masterID int) (string, error) {
+	// Calcola le porte
+	raftPort := 1234 + masterID
+	rpcPort := 8000 + masterID
+
+	// Ottieni la lista dei master esistenti per RAFT_ADDRESSES
+	existingMasters := d.getExistingMasters()
+	raftAddresses := strings.Join(existingMasters, ",")
+	rpcAddresses := d.getExistingRPCAddresses()
+
+	// Crea il comando docker run
+	cmd := exec.Command("docker", "run", "-d",
+		"--name", fmt.Sprintf("docker-master%d-1", masterID),
+		"--network", "docker_mapreduce-net",
+		"-p", fmt.Sprintf("%d:1234", raftPort),
+		"-p", fmt.Sprintf("%d:8000", rpcPort),
+		"-v", "mapreduce-project_intermediate-data:/tmp/mapreduce",
+		"-v", "./data:/root/data:ro",
+		"-e", fmt.Sprintf("RAFT_ADDRESSES=%s", raftAddresses),
+		"-e", fmt.Sprintf("RPC_ADDRESSES=%s", rpcAddresses),
+		"-e", "TMP_PATH=/tmp/mapreduce",
+		"-e", "METRICS_ENABLED=true",
+		"-e", "METRICS_PORT=9090",
+		"docker-master0", // Usa la stessa immagine
+		"./mapreduce", "master", fmt.Sprintf("%d", masterID), "/root/data/Words.txt")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("failed to add master %d: %v, output: %s", masterID, err, string(output))
+	}
+
+	return fmt.Sprintf("Master %d added successfully", masterID), nil
+}
+
+// addDynamicWorker aggiunge un worker dinamicamente
+func (d *Dashboard) addDynamicWorker(workerID int) (string, error) {
+	// Ottieni la lista dei master esistenti per RPC_ADDRESSES
+	rpcAddresses := d.getExistingRPCAddresses()
+
+	// Crea il comando docker run
+	cmd := exec.Command("docker", "run", "-d",
+		"--name", fmt.Sprintf("docker-worker%d-1", workerID),
+		"--network", "docker_mapreduce-net",
+		"-v", "mapreduce-project_intermediate-data:/tmp/mapreduce",
+		"-v", "./data:/root/data:ro",
+		"-e", fmt.Sprintf("RPC_ADDRESSES=%s", rpcAddresses),
+		"-e", "TMP_PATH=/tmp/mapreduce",
+		"-e", fmt.Sprintf("WORKER_ID=worker-%d", workerID),
+		"-e", "MAPREDUCE_WORKER_RETRY_INTERVAL=2s",
+		"-e", "MAPREDUCE_WORKER_MAX_RETRIES=10",
+		"docker-worker1", // Usa la stessa immagine
+		"./mapreduce", "worker")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("failed to add worker %d: %v, output: %s", workerID, err, string(output))
+	}
+
+	return fmt.Sprintf("Worker %d added successfully", workerID), nil
+}
+
+// getExistingMasters ottiene la lista dei master esistenti per RAFT
+func (d *Dashboard) getExistingMasters() []string {
+	cmd := exec.Command("docker", "ps", "--filter", "name=docker-master", "--format", "{{.Names}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return []string{"master0:1234", "master1:1234", "master2:1234"} // Default
+	}
+
+	var masters []string
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	for _, line := range lines {
+		if strings.Contains(line, "docker-master") {
+			// Estrai numero dal nome
+			parts := strings.Split(line, "master")
+			if len(parts) > 1 {
+				numStr := strings.Split(parts[1], "-")[0]
+				if num, err := strconv.Atoi(numStr); err == nil {
+					masters = append(masters, fmt.Sprintf("master%d:1234", num))
+				}
+			}
+		}
+	}
+
+	// Ordina per numero
+	sort.Slice(masters, func(i, j int) bool {
+		numI := strings.Split(masters[i], "master")[1]
+		numJ := strings.Split(masters[j], "master")[1]
+		return numI < numJ
+	})
+
+	return masters
+}
+
+// getExistingRPCAddresses ottiene la lista degli indirizzi RPC esistenti
+func (d *Dashboard) getExistingRPCAddresses() string {
+	cmd := exec.Command("docker", "ps", "--filter", "name=docker-master", "--format", "{{.Names}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return "master0:8000,master1:8001,master2:8002" // Default
+	}
+
+	var rpcAddrs []string
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	for _, line := range lines {
+		if strings.Contains(line, "docker-master") {
+			// Estrai numero dal nome
+			parts := strings.Split(line, "master")
+			if len(parts) > 1 {
+				numStr := strings.Split(parts[1], "-")[0]
+				if num, err := strconv.Atoi(numStr); err == nil {
+					rpcAddrs = append(rpcAddrs, fmt.Sprintf("master%d:800%d", num, num))
+				}
+			}
+		}
+	}
+
+	// Ordina per numero
+	sort.Slice(rpcAddrs, func(i, j int) bool {
+		numI := strings.Split(rpcAddrs[i], "master")[1]
+		numJ := strings.Split(rpcAddrs[j], "master")[1]
+		return numI < numJ
+	})
+
+	return strings.Join(rpcAddrs, ",")
+}
+
+// ===== WEBSOCKET FUNCTIONS =====
+
+// handleWebSocket gestisce le connessioni WebSocket
+func (d *Dashboard) handleWebSocket(c *gin.Context) {
+	conn, err := d.upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		fmt.Printf("WebSocket upgrade failed: %v\n", err)
+		return
+	}
+	defer conn.Close()
+
+	// Registra il client
+	d.clientsMutex.Lock()
+	d.clients[conn] = true
+	d.clientsMutex.Unlock()
+
+	fmt.Printf("WebSocket client connected. Total clients: %d\n", len(d.clients))
+
+	// Invia dati iniziali
+	d.sendInitialData(conn)
+
+	// Gestisce i messaggi dal client
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				fmt.Printf("WebSocket error: %v\n", err)
+			}
+			break
+		}
+	}
+
+	// Rimuove il client quando si disconnette
+	d.clientsMutex.Lock()
+	delete(d.clients, conn)
+	d.clientsMutex.Unlock()
+	fmt.Printf("WebSocket client disconnected. Total clients: %d\n", len(d.clients))
+}
+
+// sendInitialData invia i dati iniziali al client WebSocket
+func (d *Dashboard) sendInitialData(conn *websocket.Conn) {
+	data := d.getDashboardData()
+
+	// Prepara i dati per l'invio
+	updateData := map[string]interface{}{
+		"type":      "initial_data",
+		"timestamp": time.Now(),
+		"data":      data,
+	}
+
+	if err := conn.WriteJSON(updateData); err != nil {
+		fmt.Printf("Error sending initial data: %v\n", err)
+	}
+}
+
+// handleWebSocketMessages gestisce i messaggi broadcast
+func (d *Dashboard) handleWebSocketMessages() {
+	for {
+		select {
+		case message := <-d.broadcast:
+			d.clientsMutex.RLock()
+			for client := range d.clients {
+				err := client.WriteMessage(websocket.TextMessage, message)
+				if err != nil {
+					fmt.Printf("Error broadcasting message: %v\n", err)
+					client.Close()
+					delete(d.clients, client)
+				}
+			}
+			d.clientsMutex.RUnlock()
+		}
+	}
+}
+
+// startRealTimeUpdates avvia gli aggiornamenti in tempo reale
+func (d *Dashboard) startRealTimeUpdates() {
+	ticker := time.NewTicker(5 * time.Second) // Aggiorna ogni 5 secondi
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			d.broadcastUpdate()
+		}
+	}
+}
+
+// broadcastUpdate invia un aggiornamento a tutti i client connessi
+func (d *Dashboard) broadcastUpdate() {
+	d.clientsMutex.RLock()
+	clientCount := len(d.clients)
+	d.clientsMutex.RUnlock()
+
+	if clientCount == 0 {
+		return // Nessun client connesso
+	}
+
+	// Raccoglie i dati aggiornati
+	mastersData, _ := d.getMastersData()
+	workersData, _ := d.getWorkersData()
+	healthData := d.healthChecker.CheckAll(context.Background())
+
+	// Prepara l'aggiornamento
+	updateData := map[string]interface{}{
+		"type":      "realtime_update",
+		"timestamp": time.Now(),
+		"data": map[string]interface{}{
+			"masters": mastersData,
+			"workers": workersData,
+			"health":  healthData,
+		},
+	}
+
+	// Converte in JSON
+	jsonData, err := json.Marshal(updateData)
+	if err != nil {
+		fmt.Printf("Error marshaling update data: %v\n", err)
+		return
+	}
+
+	// Invia il broadcast
+	select {
+	case d.broadcast <- jsonData:
+	default:
+		// Se il canale è pieno, salta questo aggiornamento
+	}
+}
+
+// broadcastCustomUpdate invia un aggiornamento personalizzato
+func (d *Dashboard) broadcastCustomUpdate(updateType string, data interface{}) {
+	updateData := map[string]interface{}{
+		"type":      updateType,
+		"timestamp": time.Now(),
+		"data":      data,
+	}
+
+	jsonData, err := json.Marshal(updateData)
+	if err != nil {
+		fmt.Printf("Error marshaling custom update: %v\n", err)
+		return
+	}
+
+	select {
+	case d.broadcast <- jsonData:
+	default:
+		// Se il canale è pieno, salta questo aggiornamento
 	}
 }

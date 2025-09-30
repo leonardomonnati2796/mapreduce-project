@@ -12,6 +12,17 @@ x-common-vars: &common-vars
   MAPREDUCE_MASTER_HEARTBEAT_INTERVAL: "5s"
   MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
 
+# Variabili estese per servizi aggiuntivi
+x-extended-vars: &extended-vars
+  RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234,master3:1234"
+  RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002,master3:8000"
+  TMP_PATH: "/tmp/mapreduce"
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  MAPREDUCE_MASTER_TASK_TIMEOUT: "120s"
+  MAPREDUCE_MASTER_HEARTBEAT_INTERVAL: "5s"
+  MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+
 # Configurazione comune per i master
 x-master-config: &master-config
   build:
@@ -97,6 +108,41 @@ services:
       MAPREDUCE_WORKER_MAX_RETRIES: "10"
       WORKER_ID: "worker-2"
 
+  worker3:
+    <<: *worker-config
+    environment:
+      <<: *common-vars
+      RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
+      TMP_PATH: "/tmp/mapreduce"
+      MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+      MAPREDUCE_WORKER_MAX_RETRIES: "10"
+      WORKER_ID: "worker-3"
+
+  # Servizi aggiuntivi per gestione dinamica
+  master3:
+    <<: *master-config
+    hostname: master3
+    command: ["./mapreduce", "master", "3", *input-file]
+    ports:
+      - "1237:1234"
+      - "8003:8000"
+    environment:
+      <<: *extended-vars
+    profiles:
+      - additional
+
+  worker4:
+    <<: *worker-config
+    environment:
+      <<: *common-vars
+      RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002,master3:8000"
+      TMP_PATH: "/tmp/mapreduce"
+      MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+      MAPREDUCE_WORKER_MAX_RETRIES: "10"
+      WORKER_ID: "worker-4"
+    profiles:
+      - additional
+
   dashboard:
     build:
       context: ..
@@ -117,6 +163,9 @@ services:
       TMP_PATH: "/tmp/mapreduce"
       METRICS_ENABLED: "true"
       METRICS_PORT: "9090"
+      # WebSocket configuration
+      WEBSOCKET_ENABLED: "true"
+      WEBSOCKET_UPDATE_INTERVAL: "5s"
     restart: unless-stopped
     stop_grace_period: 30s
 
