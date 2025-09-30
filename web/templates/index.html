@@ -113,8 +113,8 @@
 
         .real-time-indicator {
             position: fixed;
-            top: 20px;
-            right: 20px;
+            bottom: 20px;
+            left: 20px;
             background: var(--success-color);
             color: white;
             padding: 8px 16px;
@@ -381,7 +381,7 @@
                                 <button class="btn btn-warning btn-lg px-4" 
                                         data-action="elect-leader"
                                         data-bs-toggle="tooltip" 
-                                        title="Forza l'elezione di un nuovo leader master nel cluster Raft">
+                                        title="Force a new leader election in the Raft cluster">
                                     <i class="fas fa-vote-yea"></i><br>
                                     <span class="small">Elect New Leader</span>
                                 </button>
@@ -442,8 +442,9 @@
             </div>
             <div class="col-lg-6 mb-3 fade-in">
                 <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-server"></i> Workers</h5>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-server"></i> Workers</h5>
+                        <button id="toggleWorkersView" class="btn btn-sm btn-outline-secondary">Show all</button>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">
@@ -493,19 +494,19 @@
                             <div class="col-lg-8">
                                 <div class="mb-3">
                                     <label for="textInput" class="form-label">
-                                        <i class="fas fa-keyboard"></i> Input Text
+                                        <i class="fas fa-keyboard"></i> Input text
                                     </label>
                                     <textarea class="form-control" id="textInput" rows="8" 
-                                              placeholder="Incolla qui il testo su cui vuoi eseguire il MapReduce..."></textarea>
+                                              placeholder="Paste the text you want to run MapReduce on..."></textarea>
                                     <div class="form-text">
-                                        Il testo verrà processato con MapReduce per contare le parole. 
-                                        Inserisci il testo e clicca "Run MapReduce".
+                                        The text will be processed with MapReduce to count words. 
+                                        Enter the text and click "Run MapReduce".
                                     </div>
                                 </div>
                                 <div class="mb-3">
                                     <div class="row">
                                         <div class="col-md-6">
-                                            <label for="nReduce" class="form-label">Numero Reduce Tasks</label>
+                                            <label for="nReduce" class="form-label">Number of reduce tasks</label>
                                             <input type="number" class="form-control" id="nReduce" value="3" min="1" max="10">
                                         </div>
                                         <div class="col-md-6">
@@ -524,14 +525,14 @@
                                     </div>
                                     <div class="card-body">
                                         <ol class="small">
-                                            <li>Incolla il testo nell'area di input</li>
-                                            <li>Imposta il numero di reduce tasks</li>
-                                            <li>Clicca "Run MapReduce"</li>
-                                            <li>Visualizza i risultati qui sotto</li>
+                                            <li>Paste the text in the input area</li>
+                                            <li>Set the number of reduce tasks</li>
+                                            <li>Click "Run MapReduce"</li>
+                                            <li>View the results below</li>
                                         </ol>
                                         <div class="alert alert-info small mt-3">
                                             <i class="fas fa-lightbulb"></i>
-                                            <strong>Tip:</strong> Il sistema processerà il testo e ti mostrerà il conteggio delle parole con tutti i file intermedi uniti.
+                                            <strong>Tip:</strong> The system will process the text and show the word count with all intermediate files combined.
                                         </div>
                                     </div>
                                 </div>
@@ -584,7 +585,7 @@
                                             </button>
                                         </div>
                                         <div class="form-text">
-                                            Questo è il risultato finale combinato di tutti i file di output intermedi del MapReduce.
+                                            This is the final combined result of all MapReduce intermediate output files.
                                         </div>
                                     </div>
                                     
@@ -626,7 +627,7 @@
                                 <button class="btn btn-outline-success w-100" 
                                         data-action="start-master"
                                         data-bs-toggle="tooltip" 
-                                        title="Aggiunge un nuovo master al cluster e forza una nuova elezione del leader">
+                                        title="Adds a new master to the cluster and triggers a new leader election">
                                     <i class="fas fa-crown"></i><br>
                                     Add Master
                                 </button>
@@ -635,7 +636,7 @@
                                 <button class="btn btn-outline-info w-100" 
                                         data-action="start-worker"
                                         data-bs-toggle="tooltip" 
-                                        title="Aggiunge un nuovo worker al cluster per aumentare la capacità di processing">
+                                        title="Adds a new worker to the cluster to increase processing capacity">
                                     <i class="fas fa-server"></i><br>
                                     Add Worker
                                 </button>
@@ -644,7 +645,7 @@
                                 <button class="btn btn-outline-warning w-100" 
                                         data-action="restart-cluster"
                                         data-bs-toggle="tooltip" 
-                                        title="Riavvia il cluster con la configurazione di default (3 master, 3 worker)">
+                                        title="Restarts the cluster with the default configuration (3 masters, 2 workers)">
                                     <i class="fas fa-redo"></i><br>
                                     Reset Cluster
                                 </button>
@@ -653,7 +654,7 @@
                                 <button class="btn btn-outline-danger w-100" 
                                         data-action="stop-all"
                                         data-bs-toggle="tooltip" 
-                                        title="Ferma tutti i servizi del cluster MapReduce">
+                                        title="Stops all MapReduce cluster services">
                                     <i class="fas fa-stop"></i><br>
                                     Stop All
                                 </button>
@@ -667,7 +668,7 @@
                                     <ul class="mb-0 mt-2">
                                         <li><strong>Add Master:</strong> Adds a new master to the cluster and triggers a new leader election</li>
                                         <li><strong>Add Worker:</strong> Adds a new worker to increase processing capacity</li>
-                                        <li><strong>Reset Cluster:</strong> Restarts the cluster with default configuration (3 masters, 3 workers)</li>
+                                        <li><strong>Reset Cluster:</strong> Restarts the cluster with default configuration (3 masters, 2 workers)</li>
                                         <li><strong>Stop All:</strong> Stops all cluster services</li>
                                     </ul>
                                     All actions are executed through the docker-manager.ps1 script and are logged in real-time.
@@ -680,8 +681,8 @@
         </div>
     </div>
 
-    <!-- Floating Action Button -->
-    <div class="floating-action" onclick="refreshData()">
+    <!-- Floating Action Button moved to bottom-left to avoid overlapping controls -->
+    <div class="floating-action" style="left: 30px; right: auto; bottom: 30px;" onclick="refreshData()">
         <i class="fas fa-sync-alt"></i>
     </div>
 
@@ -830,7 +831,7 @@
             const resultsSection = document.getElementById('resultsSection');
             
             if (!textInput.value.trim()) {
-                alert('Per favore inserisci del testo da processare.');
+                alert('Please enter some text to process.');
                 return;
             }
             
@@ -854,7 +855,7 @@
                     resetButtonState();
                 } catch (error) {
                     console.error('Error processing text:', error);
-                    alert('Errore durante il processing: ' + error.message);
+                    alert('Error during processing: ' + error.message);
                     resetButtonState();
                 }
             }, 2000); // Simulate 2 seconds of processing

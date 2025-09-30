@@ -3,6 +3,8 @@
 // Global variables
 let refreshInterval;
 let isAutoRefreshEnabled = true;
+let showAllWorkers = false;
+const DEFAULT_WORKERS_LIMIT = 20;
 
 // Initialize dashboard
 function initDashboard() {
@@ -76,7 +78,8 @@ async function refreshData() {
         // Update Masters table
         updateMastersTable(mastersData);
         
-        // Update Workers table
+        // Cache and update Workers table
+        window.__lastWorkersData = workersData;
         updateWorkersTable(workersData);
         
         // Update health indicators
@@ -150,6 +153,20 @@ function setupEventListeners() {
         realtimeIndicator.addEventListener('click', toggleAutoRefresh);
         realtimeIndicator.style.cursor = 'pointer';
         realtimeIndicator.title = 'Click to toggle auto-refresh';
+    }
+    
+    // Toggle Workers view (show all / show less)
+    const toggleWorkersBtn = document.getElementById('toggleWorkersView');
+    if (toggleWorkersBtn) {
+        toggleWorkersBtn.addEventListener('click', function() {
+            showAllWorkers = !showAllWorkers;
+            this.textContent = showAllWorkers ? 'Show less' : 'Show all';
+            if (window.__lastWorkersData) {
+                updateWorkersTable(window.__lastWorkersData);
+            } else {
+                refreshData();
+            }
+        });
     }
     
     // Setup button handlers
@@ -716,7 +733,8 @@ function updateWorkersTable(workersData) {
     
     tbody.innerHTML = '';
     
-    workersData.forEach(worker => {
+    const visibleWorkers = showAllWorkers ? workersData : workersData.slice(0, DEFAULT_WORKERS_LIMIT);
+    visibleWorkers.forEach(worker => {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><strong>${worker.id}</strong></td>
@@ -734,6 +752,12 @@ function updateWorkersTable(workersData) {
         `;
         tbody.appendChild(row);
     });
+    
+    const toggleBtn = document.getElementById('toggleWorkersView');
+    if (toggleBtn) {
+        toggleBtn.style.display = (workersData && workersData.length > DEFAULT_WORKERS_LIMIT) ? 'inline-block' : 'none';
+        toggleBtn.textContent = showAllWorkers ? 'Show less' : 'Show all';
+    }
 }
 
 // Update health indicators

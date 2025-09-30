@@ -47,15 +47,18 @@ type Dashboard struct {
 
 // DashboardData contiene i dati per il dashboard
 type DashboardData struct {
-	Title      string                 `json:"title"`
-	Version    string                 `json:"version"`
-	Uptime     time.Duration          `json:"uptime"`
-	Health     HealthStatus           `json:"health"`
-	Metrics    map[string]interface{} `json:"metrics"`
-	Jobs       []JobInfo              `json:"jobs"`
-	Workers    []WorkerInfoDashboard  `json:"workers"`
-	Masters    []MasterInfo           `json:"masters"`
-	LastUpdate time.Time              `json:"last_update"`
+	Title           string                 `json:"title"`
+	Version         string                 `json:"version"`
+	Uptime          time.Duration          `json:"uptime"`
+	Health          HealthStatus           `json:"health"`
+	Metrics         map[string]interface{} `json:"metrics"`
+	Jobs            []JobInfo              `json:"jobs"`
+	Workers         []WorkerInfoDashboard  `json:"workers"`
+	Masters         []MasterInfo           `json:"masters"`
+	ActiveWorkers   int                    `json:"active_workers"`
+	DegradedWorkers int                    `json:"degraded_workers"`
+	FailedWorkers   int                    `json:"failed_workers"`
+	LastUpdate      time.Time              `json:"last_update"`
 }
 
 // JobInfo informazioni su un job
@@ -308,16 +311,35 @@ func (d *Dashboard) getDashboardData() DashboardData {
 		masters = []MasterInfo{}
 	}
 
+	// Calcola contatori workers
+	activeWorkers := 0
+	degradedWorkers := 0
+	failedWorkers := 0
+
+	for _, worker := range workers {
+		switch worker.Status {
+		case "active":
+			activeWorkers++
+		case "degraded":
+			degradedWorkers++
+		case "failed":
+			failedWorkers++
+		}
+	}
+
 	return DashboardData{
-		Title:      "MapReduce Dashboard",
-		Version:    "1.0.0",
-		Uptime:     uptime,
-		Health:     health,
-		Metrics:    metrics,
-		Jobs:       jobs,
-		Workers:    workers,
-		Masters:    masters,
-		LastUpdate: now,
+		Title:           "MapReduce Dashboard",
+		Version:         "1.0.0",
+		Uptime:          uptime,
+		Health:          health,
+		Metrics:         metrics,
+		Jobs:            jobs,
+		Workers:         workers,
+		Masters:         masters,
+		ActiveWorkers:   activeWorkers,
+		DegradedWorkers: degradedWorkers,
+		FailedWorkers:   failedWorkers,
+		LastUpdate:      now,
 	}
 }
 
@@ -424,16 +446,10 @@ func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 		})
 	}
 
-	// Se non ci sono worker reali, restituisce dati di fallback
+	// Se non ci sono worker reali, restituisce lista vuota (no fallback workers)
 	if len(allWorkers) == 0 {
-		allWorkers = []WorkerInfoDashboard{
-			{
-				ID:        "worker-1",
-				Status:    "unknown",
-				LastSeen:  time.Now().Add(-5 * time.Minute),
-				TasksDone: 0,
-			},
-		}
+		fmt.Printf("[Dashboard] No workers found from leader master\n")
+		return []WorkerInfoDashboard{}, nil
 	}
 
 	fmt.Printf("[Dashboard] Found %d workers from leader master\n", len(allWorkers))
@@ -481,16 +497,10 @@ func (d *Dashboard) getWorkersDataFromAllMasters(rpcAddrs []string) ([]WorkerInf
 		allWorkers = append(allWorkers, *worker)
 	}
 
-	// Se non ci sono worker reali, restituisce dati di fallback
+	// Se non ci sono worker reali, restituisce lista vuota (no fallback workers)
 	if len(allWorkers) == 0 {
-		allWorkers = []WorkerInfoDashboard{
-			{
-				ID:        "worker-1",
-				Status:    "unknown",
-				LastSeen:  time.Now().Add(-5 * time.Minute),
-				TasksDone: 0,
-			},
-		}
+		fmt.Printf("[Dashboard] No workers found from any master\n")
+		return []WorkerInfoDashboard{}, nil
 	}
 
 	fmt.Printf("[Dashboard] Found %d unique workers from all masters\n", len(allWorkers))
@@ -1312,6 +1322,7 @@ func (d *Dashboard) processTextWithMaster(jobID, inputFile string, nReduce int, 
 	time.Sleep(textProcessDelay) // Simula tempo di processing
 
 	// Processa il testo e genera i file di output
+	_ = tempDir
 	d.generateMapReduceOutput(jobID, inputFile, nReduce)
 }
 
@@ -1459,30 +1470,133 @@ func (d *Dashboard) getOutputPath() string {
 func (d *Dashboard) executeDockerManagerCommand(action string) (string, error) {
 	// Trova il percorso del docker-manager.ps1
 	scriptPath := "scripts/docker-manager.ps1"
-	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("docker-manager.ps1 not found at %s", scriptPath)
+	if _, err := os.Stat(scriptPath); err == nil {
+		// Usa PowerShell su host Windows quando disponibile
+		var cmd *exec.Cmd
+		switch action {
+		case "add-master":
+			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "add-master")
+		case "add-worker":
+			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "add-worker")
+		case "stop":
+			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "stop")
+		case "reset":
+			cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "reset")
+		default:
+			return "", fmt.Errorf("unknown action: %s", action)
+		}
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output), fmt.Errorf("command failed: %v, output: %s", err, string(output))
+		}
+		return string(output), nil
 	}
 
-	// Costruisce il comando PowerShell
-	var cmd *exec.Cmd
+	// Fallback in-container: usa docker CLI (richiede docker.sock montato)
+	// Helpers
+	run := func(name string, args ...string) (string, error) {
+		cmd := exec.Command(name, args...)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	// Elenco container per nome
+	listAll, err := run("docker", "ps", "-a", "--format", "{{.Names}}")
+	if err != nil {
+		return listAll, fmt.Errorf("docker ps -a failed: %v", err)
+	}
+	listRun, err := run("docker", "ps", "--format", "{{.Names}}")
+	if err != nil {
+		return listRun, fmt.Errorf("docker ps failed: %v", err)
+	}
+	contains := func(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+	isRunning := func(name string) bool { return contains(listRun, name) }
+
+	// Candidati robusti per nomi container (compose v2 con '-' e v1 con '_')
+	masterCandidates := []string{"master1-1", "master2-1", "master1_1", "master2_1"}
+	workerCandidates := []string{"worker1-1", "worker2-1", "worker1_1", "worker2_1"}
+
 	switch action {
 	case "add-master":
-		cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "add-master")
+		for _, suffix := range masterCandidates {
+			// Trova nome completo che termina con il suffisso
+			lines := strings.Split(listAll, "\n")
+			for _, n := range lines {
+				n = strings.TrimSpace(n)
+				if n == "" {
+					continue
+				}
+				if strings.HasSuffix(n, suffix) && !isRunning(n) {
+					out, err := run("docker", "start", n)
+					if err != nil {
+						return out, fmt.Errorf("failed to start %s: %v", n, err)
+					}
+					return fmt.Sprintf("started %s", n), nil
+				}
+			}
+		}
+		return "no stopped master to start", nil
 	case "add-worker":
-		cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "add-worker")
+		for _, suffix := range workerCandidates {
+			lines := strings.Split(listAll, "\n")
+			for _, n := range lines {
+				n = strings.TrimSpace(n)
+				if n == "" {
+					continue
+				}
+				if strings.HasSuffix(n, suffix) && !isRunning(n) {
+					out, err := run("docker", "start", n)
+					if err != nil {
+						return out, fmt.Errorf("failed to start %s: %v", n, err)
+					}
+					return fmt.Sprintf("started %s", n), nil
+				}
+			}
+		}
+		return "no stopped worker to start", nil
 	case "stop":
-		cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "stop")
+		// Ferma masters e workers, non fermare il dashboard stesso
+		stopped := []string{}
+		lines := strings.Split(listRun, "\n")
+		for _, n := range lines {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			if strings.Contains(n, "master") || strings.Contains(n, "worker") {
+				out, err := run("docker", "stop", n)
+				if err == nil {
+					stopped = append(stopped, n)
+				} else {
+					_ = out
+				}
+			}
+		}
+		return fmt.Sprintf("stopped: %v", stopped), nil
 	case "reset":
-		cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "reset")
+		// Ferma e riavvia i servizi di default
+		_, _ = d.executeDockerManagerCommand("stop")
+		// Avvia i default: master0/master1/master2/worker1/worker2
+		started := []string{}
+		targets := []string{"master0", "master1", "master2", "worker1", "worker2"}
+		// Trova nomi reali in base ai target
+		lines := strings.Split(listAll, "\n")
+		for _, t := range targets {
+			for _, n := range lines {
+				n = strings.TrimSpace(n)
+				if n == "" {
+					continue
+				}
+				if strings.Contains(n, t) {
+					_, err := run("docker", "start", n)
+					if err == nil {
+						started = append(started, n)
+						break
+					}
+				}
+			}
+		}
+		return fmt.Sprintf("started: %v", started), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}
-
-	// Esegue il comando
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(output), fmt.Errorf("command failed: %v, output: %s", err, string(output))
-	}
-
-	return string(output), nil
 }

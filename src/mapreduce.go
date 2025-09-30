@@ -46,6 +46,17 @@ func Reduce(key string, values []string) string {
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	fmt.Println("Worker started - connecting to master cluster...")
 
+	// Determina un ID worker stabile
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		if hn, err := os.Hostname(); err == nil && hn != "" {
+			workerID = hn
+		} else {
+			workerID = fmt.Sprintf("worker-%d", os.Getpid())
+		}
+	}
+	fmt.Printf("Worker ID: %s\n", workerID)
+
 	// Ottiene gli indirizzi dei master dalla configurazione
 	rpcAddrs := getMasterRpcAddresses()
 	if len(rpcAddrs) == 0 {
@@ -55,10 +66,20 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 
 	fmt.Printf("Worker connesso a %d master: %v\n", len(rpcAddrs), rpcAddrs)
 
+	// Avvia il heartbeat in background
+	go func() {
+		heartbeatTicker := time.NewTicker(10 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		for range heartbeatTicker.C {
+			sendHeartbeat(workerID, rpcAddrs)
+		}
+	}()
+
 	// Loop principale del worker
 	for {
 		// Cerca un master disponibile
-		masterAddr := findAvailableMaster(rpcAddrs)
+		masterAddr := findAvailableMaster(rpcAddrs, workerID)
 		if masterAddr == "" {
 			fmt.Println("Nessun master disponibile, riprovo tra 5 secondi...")
 			time.Sleep(workerRetryDelay)
@@ -68,7 +89,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		fmt.Printf("Worker connesso al master: %s\n", masterAddr)
 
 		// Richiede un task dal master
-		task := requestTaskFromMaster(masterAddr)
+		task := requestTaskFromMaster(masterAddr, workerID)
 		if task == nil {
 			fmt.Println("Nessun task disponibile, riprovo tra 2 secondi...")
 			time.Sleep(taskRetryDelay)
@@ -79,7 +100,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		executeTask(task, mapf, reducef)
 
 		// Segnala il completamento del task
-		reportTaskCompletion(masterAddr, task)
+		reportTaskCompletion(masterAddr, task, workerID)
 
 		// Se il task è di uscita, termina
 		if task.Type == ExitTask {
@@ -92,7 +113,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 }
 
 // findAvailableMaster cerca il master leader tra quelli configurati
-func findAvailableMaster(rpcAddrs []string) string {
+func findAvailableMaster(rpcAddrs []string, workerID string) string {
 	for _, addr := range rpcAddrs {
 		// Prova a connettersi al master
 		client, err := rpc.DialHTTP("tcp", addr)
@@ -121,7 +142,7 @@ func findAvailableMaster(rpcAddrs []string) string {
 		}
 
 		var reply Task
-		err = client.Call("Master.AssignTask", RequestTaskArgs{}, &reply)
+		err = client.Call("Master.AssignTask", RequestTaskArgs{WorkerID: workerID}, &reply)
 		client.Close()
 
 		if err == nil {
@@ -134,7 +155,7 @@ func findAvailableMaster(rpcAddrs []string) string {
 }
 
 // requestTaskFromMaster richiede un task dal master specificato
-func requestTaskFromMaster(masterAddr string) *Task {
+func requestTaskFromMaster(masterAddr string, workerID string) *Task {
 	client, err := rpc.DialHTTP("tcp", masterAddr)
 	if err != nil {
 		fmt.Printf("Errore connessione master %s: %v\n", masterAddr, err)
@@ -143,7 +164,7 @@ func requestTaskFromMaster(masterAddr string) *Task {
 	defer client.Close()
 
 	var task Task
-	err = client.Call("Master.AssignTask", RequestTaskArgs{}, &task)
+	err = client.Call("Master.AssignTask", RequestTaskArgs{WorkerID: workerID}, &task)
 	if err != nil {
 		fmt.Printf("Errore richiesta task da %s: %v\n", masterAddr, err)
 		return nil
@@ -246,7 +267,7 @@ func executeReduceTask(task *Task, reducef func(string, []string) string) {
 }
 
 // reportTaskCompletion segnala il completamento del task al master
-func reportTaskCompletion(masterAddr string, task *Task) {
+func reportTaskCompletion(masterAddr string, task *Task, workerID string) {
 	client, err := rpc.DialHTTP("tcp", masterAddr)
 	if err != nil {
 		fmt.Printf("Errore connessione master %s per report: %v\n", masterAddr, err)
@@ -255,8 +276,9 @@ func reportTaskCompletion(masterAddr string, task *Task) {
 	defer client.Close()
 
 	args := TaskCompletedArgs{
-		TaskID: task.TaskID,
-		Type:   task.Type,
+		TaskID:   task.TaskID,
+		Type:     task.Type,
+		WorkerID: workerID,
 	}
 
 	var reply Reply
@@ -302,4 +324,34 @@ func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
+}
+
+// sendHeartbeat invia un heartbeat al master leader
+func sendHeartbeat(workerID string, rpcAddrs []string) {
+	for _, addr := range rpcAddrs {
+		client, err := rpc.DialHTTP("tcp", addr)
+		if err != nil {
+			continue // Master non disponibile, prova il prossimo
+		}
+
+		// Chiedi informazioni sul master per verificare se è il leader
+		var args GetMasterInfoArgs
+		var reply MasterInfoReply
+		err = client.Call("Master.GetMasterInfo", &args, &reply)
+		if err == nil && reply.IsLeader {
+			// Invia heartbeat al leader
+			heartbeatArgs := WorkerHeartbeatArgs{WorkerID: workerID}
+			var heartbeatReply WorkerHeartbeatReply
+			err = client.Call("Master.WorkerHeartbeat", &heartbeatArgs, &heartbeatReply)
+			client.Close()
+
+			if err == nil && heartbeatReply.Success {
+				fmt.Printf("Worker %s: Heartbeat inviato con successo\n", workerID)
+				return
+			}
+		} else {
+			client.Close()
+		}
+	}
+	fmt.Printf("Worker %s: Nessun leader trovato per heartbeat\n", workerID)
 }

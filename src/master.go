@@ -78,8 +78,9 @@ type Master struct {
 	raftAddrs      []string
 	rpcAddrs       []string
 	// Tracciamento worker
-	workers        map[string]*WorkerInfo // Worker ID -> WorkerInfo
-	workerLastSeen map[string]time.Time   // Worker ID -> Last seen time
+	workers         map[string]*WorkerInfo // Worker ID -> WorkerInfo
+	workerLastSeen  map[string]time.Time   // Worker ID -> Last seen time
+	workerHeartbeat map[string]time.Time   // Worker ID -> Last heartbeat time
 }
 
 func (m *Master) Apply(logEntry *raft.Log) interface{} {
@@ -551,20 +552,27 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 		*reply = *taskToDo
 		fmt.Printf("[Master] Restituisco task: %v\n", *taskToDo)
 
-		// Traccia il worker che ha richiesto il task
-		// Genera un ID worker basato sull'indirizzo IP della connessione
-		workerID := fmt.Sprintf("worker-%d", time.Now().UnixNano()%1000)
-		if _, exists := m.workers[workerID]; !exists {
-			m.workers[workerID] = &WorkerInfo{
-				ID:        workerID,
-				Status:    "active",
-				LastSeen:  time.Now(),
-				TasksDone: 0,
-			}
+		// Traccia il worker che ha richiesto il task usando l'ID fornito
+		workerID := strings.TrimSpace(args.WorkerID)
+		if workerID == "" {
+			// Nessun ID, non registrare un nuovo worker (evita duplicati fantasma)
+			fmt.Printf("[Master] RequestTask senza WorkerID: non registro worker, assegno comunque il task\n")
 		}
-		m.workerLastSeen[workerID] = time.Now()
-		m.workers[workerID].LastSeen = time.Now()
-		fmt.Printf("[Master] Worker %s tracciato, ultimo visto: %v\n", workerID, time.Now())
+
+		if workerID != "" && !strings.HasPrefix(workerID, "worker-temp-") {
+			if _, exists := m.workers[workerID]; !exists {
+				m.workers[workerID] = &WorkerInfo{
+					ID:        workerID,
+					Status:    "active",
+					LastSeen:  time.Now(),
+					TasksDone: 0,
+				}
+				fmt.Printf("[Master] Nuovo worker registrato: %s\n", workerID)
+			}
+			m.workerLastSeen[workerID] = time.Now()
+			m.workers[workerID].LastSeen = time.Now()
+			fmt.Printf("[Master] Worker %s tracciato, ultimo visto: %v\n", workerID, time.Now())
+		}
 	} else {
 		*reply = Task{Type: NoTask}
 		fmt.Printf("[Master] Nessun task disponibile, restituisco NoTask\n")
@@ -627,11 +635,17 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 
 	fmt.Printf("[Master] TaskCompleted applicato con successo: %s TaskID=%d\n", op, args.TaskID)
 
-	// Aggiorna il conteggio dei task completati per tutti i worker attivi
-	// (in una implementazione reale, dovresti tracciare quale worker ha completato il task)
-	for _, worker := range m.workers {
-		worker.TasksDone++
-		worker.LastSeen = time.Now()
+	// Aggiorna il conteggio dei task completati solo per il worker specifico
+	if args.WorkerID != "" {
+		if worker, exists := m.workers[args.WorkerID]; exists {
+			worker.TasksDone++
+			worker.LastSeen = time.Now()
+			fmt.Printf("[Master] Worker %s ha completato il task, totale task completati: %d\n", args.WorkerID, worker.TasksDone)
+		} else {
+			fmt.Printf("[Master] Worker %s non trovato nella mappa dei worker\n", args.WorkerID)
+		}
+	} else {
+		fmt.Printf("[Master] Worker ID non fornito nel TaskCompleted\n")
 	}
 
 	return nil
@@ -655,15 +669,35 @@ func (m *Master) RecoveryState() {
 	fmt.Printf("[Master] Stato corrente: isDone=%v, phase=%v, mapTasksDone=%d/%d, reduceTasksDone=%d/%d\n",
 		m.isDone, m.phase, m.mapTasksDone, len(m.mapTasks), m.reduceTasksDone, len(m.reduceTasks))
 
-	// Verifica consistenza dello stato
+	// Verifica consistenza dello stato e recovery completo
 	if m.phase == MapPhase {
-		// Conta i MapTask completati
+		// Conta i MapTask effettivamente completati verificando i file
 		actualMapDone := 0
-		for _, task := range m.mapTasks {
+		for i, task := range m.mapTasks {
 			if task.State == Completed {
-				actualMapDone++
+				// Verifica che i file intermedi siano ancora validi
+				if m.isMapTaskCompleted(i) && m.validateMapTaskOutput(i) {
+					actualMapDone++
+				} else {
+					// File corrotti o mancanti, reset del task
+					fmt.Printf("[Master] RecoveryState: MapTask %d file corrotti, resetto a Idle\n", i)
+					m.mapTasks[i].State = Idle
+					m.cleanupInvalidMapTask(i)
+				}
+			} else if task.State == InProgress {
+				// Verifica se il task è effettivamente completato
+				if m.isMapTaskCompleted(i) && m.validateMapTaskOutput(i) {
+					fmt.Printf("[Master] RecoveryState: MapTask %d completato ma marcato InProgress, correggo\n", i)
+					m.mapTasks[i].State = Completed
+					actualMapDone++
+				} else {
+					// Task bloccato, reset
+					fmt.Printf("[Master] RecoveryState: MapTask %d bloccato, resetto a Idle\n", i)
+					m.mapTasks[i].State = Idle
+				}
 			}
 		}
+
 		if actualMapDone != m.mapTasksDone {
 			fmt.Printf("[Master] Correzione mapTasksDone: %d -> %d\n", m.mapTasksDone, actualMapDone)
 			m.mapTasksDone = actualMapDone
@@ -675,13 +709,33 @@ func (m *Master) RecoveryState() {
 			fmt.Printf("[Master] RecoveryState: transizione a ReducePhase\n")
 		}
 	} else if m.phase == ReducePhase {
-		// Conta i ReduceTask completati
+		// Conta i ReduceTask effettivamente completati verificando i file
 		actualReduceDone := 0
-		for _, task := range m.reduceTasks {
+		for i, task := range m.reduceTasks {
 			if task.State == Completed {
-				actualReduceDone++
+				// Verifica che il file di output sia ancora valido
+				if m.isReduceTaskCompleted(i) && m.validateReduceTaskOutput(i) {
+					actualReduceDone++
+				} else {
+					// File corrotti o mancanti, reset del task
+					fmt.Printf("[Master] RecoveryState: ReduceTask %d file corrotti, resetto a Idle\n", i)
+					m.reduceTasks[i].State = Idle
+					m.cleanupInvalidReduceTask(i)
+				}
+			} else if task.State == InProgress {
+				// Verifica se il task è effettivamente completato
+				if m.isReduceTaskCompleted(i) && m.validateReduceTaskOutput(i) {
+					fmt.Printf("[Master] RecoveryState: ReduceTask %d completato ma marcato InProgress, correggo\n", i)
+					m.reduceTasks[i].State = Completed
+					actualReduceDone++
+				} else {
+					// Task bloccato, reset
+					fmt.Printf("[Master] RecoveryState: ReduceTask %d bloccato, resetto a Idle\n", i)
+					m.reduceTasks[i].State = Idle
+				}
 			}
 		}
+
 		if actualReduceDone != m.reduceTasksDone {
 			fmt.Printf("[Master] Correzione reduceTasksDone: %d -> %d\n", m.reduceTasksDone, actualReduceDone)
 			m.reduceTasksDone = actualReduceDone
@@ -712,8 +766,9 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 		raftAddrs:      raftAddrs,
 		rpcAddrs:       rpcAddrs,
 		// Inizializza il tracciamento worker
-		workers:        make(map[string]*WorkerInfo),
-		workerLastSeen: make(map[string]time.Time),
+		workers:         make(map[string]*WorkerInfo),
+		workerLastSeen:  make(map[string]time.Time),
+		workerHeartbeat: make(map[string]time.Time),
 	}
 
 	// Popola la mappa dei membri del cluster
@@ -958,6 +1013,71 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 							m.reduceTasks[i].State = Idle
 							m.reduceTasksDone--
 							m.cleanupInvalidReduceTask(i)
+						}
+					}
+				}
+			}
+			m.mu.Unlock()
+		}
+	}()
+
+	// Worker health monitor: rileva worker morti e resetta i loro task
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if m.raft.State() != raft.Leader {
+				continue
+			}
+
+			m.mu.Lock()
+			now := time.Now()
+			workerTimeout := 30 * time.Second // Worker considerato morto dopo 30 secondi
+
+			// Trova worker morti
+			var deadWorkers []string
+			for workerID, lastSeen := range m.workerLastSeen {
+				if now.Sub(lastSeen) > workerTimeout {
+					deadWorkers = append(deadWorkers, workerID)
+				}
+			}
+
+			// Reset task assegnati a worker morti
+			for _, workerID := range deadWorkers {
+				fmt.Printf("[Master] Worker %s considerato morto, resetto i suoi task\n", workerID)
+
+				// Rimuovi il worker dalla mappa
+				delete(m.workers, workerID)
+				delete(m.workerLastSeen, workerID)
+				delete(m.workerHeartbeat, workerID)
+
+				// Reset tutti i task InProgress (potrebbero essere assegnati al worker morto)
+				if m.phase == MapPhase {
+					for i, info := range m.mapTasks {
+						if info.State == InProgress && now.Sub(info.StartTime) > workerTimeout {
+							fmt.Printf("[Master] Reset MapTask %d per worker morto %s\n", i, workerID)
+							m.mapTasks[i].State = Idle
+
+							// Applica il reset tramite Raft per consistency
+							cmd := LogCommand{Operation: "reset-task", TaskID: i}
+							cmdBytes, err := json.Marshal(cmd)
+							if err == nil {
+								m.raft.Apply(cmdBytes, 500*time.Millisecond)
+							}
+						}
+					}
+				} else if m.phase == ReducePhase {
+					for i, info := range m.reduceTasks {
+						if info.State == InProgress && now.Sub(info.StartTime) > workerTimeout {
+							fmt.Printf("[Master] Reset ReduceTask %d per worker morto %s\n", i, workerID)
+							m.reduceTasks[i].State = Idle
+
+							// Applica il reset tramite Raft per consistency
+							cmd := LogCommand{Operation: "reset-task", TaskID: i}
+							cmdBytes, err := json.Marshal(cmd)
+							if err == nil {
+								m.raft.Apply(cmdBytes, 500*time.Millisecond)
+							}
 						}
 					}
 				}
@@ -1457,7 +1577,7 @@ func (m *Master) LeadershipTransfer(args *LeadershipTransferArgs, reply *Leaders
 			reply.Message = fmt.Sprintf("Failed to transfer leadership: %v", err)
 			return nil
 		}
-		
+
 		fmt.Printf("[Master %d] Leadership transfer avviato con successo\n", m.myID)
 		reply.Success = true
 		reply.Message = "Leadership transfer initiated successfully"
@@ -1468,5 +1588,46 @@ func (m *Master) LeadershipTransfer(args *LeadershipTransferArgs, reply *Leaders
 	fmt.Printf("[Master %d] Non sono il leader (stato: %s), non posso trasferire la leadership\n", m.myID, m.raft.State())
 	reply.Success = false
 	reply.Message = "Non sono il leader, non posso trasferire la leadership"
+	return nil
+}
+
+// WorkerHeartbeat RPC method per il heartbeat dei worker
+func (m *Master) WorkerHeartbeat(args *WorkerHeartbeatArgs, reply *WorkerHeartbeatReply) error {
+	if m.raft.State() != raft.Leader {
+		reply.Success = false
+		reply.Message = "Non sono il leader"
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	workerID := strings.TrimSpace(args.WorkerID)
+	if workerID == "" {
+		reply.Success = false
+		reply.Message = "WorkerID mancante"
+		return nil
+	}
+
+	// Aggiorna il timestamp del heartbeat
+	m.workerHeartbeat[workerID] = now
+	m.workerLastSeen[workerID] = now
+
+	// Aggiorna o crea le informazioni del worker
+	if worker, exists := m.workers[workerID]; exists {
+		worker.LastSeen = now
+	} else {
+		m.workers[workerID] = &WorkerInfo{
+			ID:        workerID,
+			Status:    "active",
+			LastSeen:  now,
+			TasksDone: 0,
+		}
+		fmt.Printf("[Master] Nuovo worker registrato: %s\n", workerID)
+	}
+
+	reply.Success = true
+	reply.Message = "Heartbeat ricevuto"
 	return nil
 }

@@ -1,9 +1,9 @@
 # Script unificato per aprire il dashboard MapReduce nel browser
-# Combina semplicità e funzionalità avanzate
+# Combina semplicita e funzionalita avanzate
 
 param(
     [string]$Port = "8080",
-    [string]$Host = "localhost",
+    [string]$HostName = "localhost",
     [switch]$Quick,
     [switch]$Help
 )
@@ -29,12 +29,12 @@ function Show-Help {
     Write-Host "  .\open-dashboard.ps1 -Port 9090          # Apre su localhost:9090"
     Write-Host "  .\open-dashboard.ps1 -Host 192.168.1.100 # Apre su IP specifico"
     Write-Host ""
-    Write-Host "FUNZIONALITÀ DASHBOARD:" -ForegroundColor Yellow
-    Write-Host "  • Monitoraggio tempo reale di Masters e Workers"
-    Write-Host "  • Controllo cluster dinamico"
-    Write-Host "  • Elezione leader manuale"
-    Write-Host "  • Processing testo con MapReduce"
-    Write-Host "  • Gestione job e metriche"
+    Write-Host "FUNZIONALITA DASHBOARD:" -ForegroundColor Yellow
+    Write-Host "  - Monitoraggio tempo reale di Masters e Workers"
+    Write-Host "  - Controllo cluster dinamico"
+    Write-Host "  - Elezione leader manuale"
+    Write-Host "  - Processing testo con MapReduce"
+    Write-Host "  - Gestione job e metriche"
     Write-Host ""
 }
 
@@ -45,14 +45,14 @@ if ($Help) {
 }
 
 # Costruisce l'URL del dashboard
-$DashboardUrl = "http://${Host}:${Port}"
+$DashboardUrl = "http://${HostName}:${Port}"
 
 if (-not $Quick) {
     Write-Host "=== MAPREDUCE DASHBOARD OPENER ===" -ForegroundColor Green
     Write-Host ""
     Write-Host "Verificando stato del dashboard..." -ForegroundColor Yellow
 } else {
-    Write-Host "🚀 Aprendo MapReduce Dashboard..." -ForegroundColor Green
+    Write-Host "Aprendo MapReduce Dashboard..." -ForegroundColor Green
     Write-Host "Verificando dashboard..." -ForegroundColor Yellow
 }
 
@@ -60,19 +60,19 @@ try {
     $response = Invoke-WebRequest -Uri $DashboardUrl -UseBasicParsing -TimeoutSec 3
     if ($response.StatusCode -eq 200) {
         if ($Quick) {
-            Write-Host "✓ Dashboard attivo!" -ForegroundColor Green
+            Write-Host "Dashboard attivo!" -ForegroundColor Green
         } else {
-            Write-Host "✓ Dashboard attivo su $DashboardUrl" -ForegroundColor Green
+            Write-Host "Dashboard attivo su $DashboardUrl" -ForegroundColor Green
         }
     } else {
-        Write-Host "⚠ Dashboard risponde ma con status: $($response.StatusCode)" -ForegroundColor Yellow
+        Write-Host "Dashboard risponde ma con status: $($response.StatusCode)" -ForegroundColor Yellow
     }
 } catch {
     if ($Quick) {
-        Write-Host "⚠ Dashboard non raggiungibile" -ForegroundColor Yellow
+        Write-Host "Dashboard non raggiungibile" -ForegroundColor Yellow
         Write-Host "Avvia il dashboard con: .\mapreduce-dashboard.exe dashboard" -ForegroundColor Cyan
     } else {
-        Write-Host "✗ Dashboard non raggiungibile su $DashboardUrl" -ForegroundColor Red
+        Write-Host "Dashboard non raggiungibile su $DashboardUrl" -ForegroundColor Red
         Write-Host ""
         Write-Host "POSSIBILI SOLUZIONI:" -ForegroundColor Yellow
         Write-Host "1. Avvia il dashboard con: .\mapreduce-dashboard.exe dashboard" -ForegroundColor Cyan
@@ -99,13 +99,13 @@ if (-not $Quick) {
 try {
     Start-Process $DashboardUrl
     if ($Quick) {
-        Write-Host "✓ Browser aperto: $DashboardUrl" -ForegroundColor Cyan
+        Write-Host "Browser aperto: $DashboardUrl" -ForegroundColor Cyan
     } else {
-        Write-Host "✓ Browser aperto con successo!" -ForegroundColor Green
-        Write-Host "✓ URL: $DashboardUrl" -ForegroundColor Cyan
+        Write-Host "Browser aperto con successo!" -ForegroundColor Green
+        Write-Host "URL: $DashboardUrl" -ForegroundColor Cyan
     }
 } catch {
-    Write-Host "✗ Errore nell'apertura del browser: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Errore nell'apertura del browser: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host ""
     Write-Host "APERTURA MANUALE:" -ForegroundColor Yellow
     Write-Host "Copia e incolla questo URL nel browser:" -ForegroundColor Cyan
@@ -116,37 +116,37 @@ try {
 # Mostra informazioni aggiuntive
 if ($Quick) {
     Write-Host ""
-    Write-Host "💡 Per avviare il dashboard:" -ForegroundColor Yellow
+    Write-Host "Per avviare il dashboard:" -ForegroundColor Yellow
     Write-Host "   .\mapreduce-dashboard.exe dashboard" -ForegroundColor White
     Write-Host ""
-    Write-Host "💡 Per elezione leader:" -ForegroundColor Yellow
+    Write-Host "Per elezione leader:" -ForegroundColor Yellow
     Write-Host "   .\mapreduce-dashboard.exe elect-leader" -ForegroundColor White
 } else {
     Write-Host ""
     Write-Host "=== INFORMAZIONI DASHBOARD ===" -ForegroundColor Green
     Write-Host "URL: $DashboardUrl" -ForegroundColor Cyan
     Write-Host "Porta: $Port" -ForegroundColor Cyan
-    Write-Host "Host: $Host" -ForegroundColor Cyan
+    Write-Host "Host: $HostName" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "=== FUNZIONALITÀ DISPONIBILI ===" -ForegroundColor Green
-    Write-Host "🔍 Monitoraggio Tempo Reale:" -ForegroundColor Yellow
-    Write-Host "   • Tabelle Masters e Workers che si aggiornano automaticamente" -ForegroundColor White
-    Write-Host "   • Health checks e metriche di sistema" -ForegroundColor White
+    Write-Host "=== FUNZIONALITA DISPONIBILI ===" -ForegroundColor Green
+    Write-Host "Monitoraggio Tempo Reale:" -ForegroundColor Yellow
+    Write-Host "   - Tabelle Masters e Workers che si aggiornano automaticamente" -ForegroundColor White
+    Write-Host "   - Health checks e metriche di sistema" -ForegroundColor White
     Write-Host ""
 
-    Write-Host "⚙️ Controllo Cluster:" -ForegroundColor Yellow
-    Write-Host "   • Add Master - Aggiunge un nuovo master" -ForegroundColor White
-    Write-Host "   • Add Worker - Aggiunge un nuovo worker" -ForegroundColor White
-    Write-Host "   • Elect Leader - Forza elezione nuovo leader" -ForegroundColor White
-    Write-Host "   • Reset Cluster - Riavvia cluster con configurazione default" -ForegroundColor White
-    Write-Host "   • Stop All - Ferma tutti i servizi" -ForegroundColor White
+    Write-Host "Controllo Cluster:" -ForegroundColor Yellow
+    Write-Host "   - Add Master - Aggiunge un nuovo master" -ForegroundColor White
+    Write-Host "   - Add Worker - Aggiunge un nuovo worker" -ForegroundColor White
+    Write-Host "   - Elect Leader - Forza elezione nuovo leader" -ForegroundColor White
+    Write-Host "   - Reset Cluster - Riavvia cluster con configurazione default" -ForegroundColor White
+    Write-Host "   - Stop All - Ferma tutti i servizi" -ForegroundColor White
     Write-Host ""
 
-    Write-Host "📊 Processing MapReduce:" -ForegroundColor Yellow
-    Write-Host "   • Text Processing - Elabora testo con MapReduce" -ForegroundColor White
-    Write-Host "   • Job Management - Gestione job e risultati" -ForegroundColor White
-    Write-Host "   • Output Visualization - Visualizzazione risultati" -ForegroundColor White
+    Write-Host "Processing MapReduce:" -ForegroundColor Yellow
+    Write-Host "   - Text Processing - Elabora testo con MapReduce" -ForegroundColor White
+    Write-Host "   - Job Management - Gestione job e risultati" -ForegroundColor White
+    Write-Host "   - Output Visualization - Visualizzazione risultati" -ForegroundColor White
     Write-Host ""
 
     Write-Host "=== COMANDI UTILI ===" -ForegroundColor Green
@@ -164,5 +164,5 @@ if ($Quick) {
     Write-Host "  POST $DashboardUrl/api/v1/system/elect-leader # Elezione leader" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "Dashboard aperto con successo! 🚀" -ForegroundColor Green
+    Write-Host "Dashboard aperto con successo!" -ForegroundColor Green
 }

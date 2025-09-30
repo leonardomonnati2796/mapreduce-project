@@ -343,6 +343,67 @@ Il sistema include componenti avanzati per la gestione, il monitoring e l'orches
 \item \textbf{Cluster Management}: Gestione del cluster, scaling e maintenance
 \end{itemize}
 
+\subsection{Architettura Unificata delle Interfacce}
+
+Un aspetto fondamentale dell'architettura del sistema è la \textbf{condivisione della logica core} tra le diverse interfacce di accesso. Contrariamente a quanto si potrebbe pensare, il progetto non duplica la logica MapReduce, ma implementa un'architettura unificata dove le funzioni principali sono condivise tra l'interfaccia locale (CLI) e quella web (Dashboard).
+
+\subsubsection{Logica Core Condivisa}
+
+Il sistema è progettato con una \textbf{logica MapReduce unificata} che viene utilizzata sia dall'interfaccia CLI che dal Dashboard web:
+
+\begin{itemize}
+\item \textbf{Funzioni MapReduce}: Le funzioni \texttt{Map()} e \texttt{Reduce()} sono implementate una sola volta in \texttt{src/mapreduce.go} e utilizzate da entrambe le interfacce
+\item \textbf{Logica del Master}: Il coordinamento dei task, la gestione dello stato e l'algoritmo di fault tolerance sono condivisi
+\item \textbf{Protocolli RPC}: Gli stessi metodi RPC (\texttt{AssignTask}, \texttt{TaskCompleted}, \texttt{IsLeader}) sono utilizzati da CLI e Dashboard
+\item \textbf{Algoritmi di Connessione}: La logica per trovare il master leader e gestire le riconnessioni è identica
+\end{itemize}
+
+\subsubsection{Differenziazione dei Ruoli}
+
+Mentre la logica core è condivisa, le interfacce si differenziano per \textbf{ruolo e modalità di utilizzo}:
+
+\textbf{Interfaccia CLI (\texttt{cmd/cli/})}:
+\begin{itemize}
+\item \textbf{Client Distribuito}: Si connette al cluster Docker tramite RPC al master leader
+\item \textbf{Job Submission}: Invia file di input al cluster per elaborazione distribuita
+\item \textbf{Monitoring Locale}: Monitora lo stato del job dal punto di vista del client
+\item \textbf{Output Retrieval}: Recupera i risultati finali dal cluster
+\item \textbf{Debugging}: Fornisce strumenti di debug per analisi del cluster
+\end{itemize}
+
+\textbf{Dashboard Web (\texttt{src/dashboard.go} + \texttt{web/})}:
+\begin{itemize}
+\item \textbf{Interfaccia di Monitoraggio}: Fornisce visualizzazione real-time dello stato del cluster
+\item \textbf{Gestione Dinamica}: Permette di aggiungere/rimuovere master e worker dinamicamente
+\item \textbf{Elaborazione Diretta}: Può elaborare testo direttamente tramite interfaccia web
+\item \textbf{Monitoring Centralizzato}: Offre vista d'insieme di tutto il cluster
+\item \textbf{Amministrazione}: Strumenti per gestione e manutenzione del sistema
+\end{itemize}
+
+\subsubsection{Vantaggi dell'Architettura Unificata}
+
+Questa architettura offre diversi vantaggi significativi:
+
+\begin{itemize}
+\item \textbf{Consistenza}: Garantisce che CLI e Dashboard utilizzino esattamente la stessa logica di elaborazione
+\item \textbf{Manutenibilità}: Le modifiche alla logica core si riflettono automaticamente in tutte le interfacce
+\item \textbf{Affidabilità}: Elimina la possibilità di inconsistenze tra diverse implementazioni
+\item \textbf{Riutilizzo del Codice}: Massimizza il riutilizzo del codice e riduce la duplicazione
+\item \textbf{Testing}: Permette di testare la logica core una sola volta per tutte le interfacce
+\end{itemize}
+
+\subsubsection{Esempio di Condivisione}
+
+Un esempio concreto di questa condivisone è il \textbf{processamento del testo}:
+
+\begin{itemize}
+\item \textbf{Dashboard}: La funzione \texttt{processText()} nel dashboard utilizza le stesse funzioni \texttt{Map()} e \texttt{Reduce()} del core
+\item \textbf{CLI}: Il comando \texttt{submitJob()} utilizza gli stessi metodi RPC e la stessa logica di connessione al leader
+\item \textbf{Risultato}: Entrambe le interfacce producono output identici per lo stesso input, garantendo consistenza
+\end{itemize}
+
+Questa architettura dimostra come sia possibile creare un sistema complesso mantenendo la semplicità e la coerenza attraverso la condivisione intelligente della logica core, permettendo alle diverse interfacce di specializzarsi nei loro ruoli specifici senza duplicare codice.
+
 \subsection{Flusso di Esecuzione}
 
 Il sistema MapReduce segue un flusso di esecuzione ben definito che garantisce elaborazione distribuita, fault tolerance e consistenza dei dati.

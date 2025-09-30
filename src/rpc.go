@@ -63,10 +63,13 @@ type Task struct {
 	NReduce int
 	NMap    int
 }
-type RequestTaskArgs struct{}
+type RequestTaskArgs struct {
+	WorkerID string `json:"worker_id"`
+}
 type TaskCompletedArgs struct {
-	TaskID int
-	Type   TaskType
+	TaskID   int      `json:"task_id"`
+	Type     TaskType `json:"type"`
+	WorkerID string   `json:"worker_id"`
 }
 type Reply struct{}
 
@@ -100,6 +103,16 @@ type WorkerInfo struct {
 // Strutture per il trasferimento della leadership
 type LeadershipTransferArgs struct{}
 type LeadershipTransferReply struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// Strutture per il heartbeat dei worker
+type WorkerHeartbeatArgs struct {
+	WorkerID string `json:"worker_id"`
+}
+
+type WorkerHeartbeatReply struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }

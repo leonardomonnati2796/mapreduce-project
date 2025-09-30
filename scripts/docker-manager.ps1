@@ -396,6 +396,35 @@ if (-not (Test-DockerRunning)) {
     exit 1
 }
 
+function Get-RunningServices {
+    try {
+        return @(docker-compose -f docker/docker-compose.yml ps --services --filter "status=running")
+    }
+    catch {
+        return @()
+    }
+}
+
+function Start-ServiceIfStopped {
+    param(
+        [string]$Service
+    )
+    $running = Get-RunningServices
+    if ($running -contains $Service) {
+        Write-ColorOutput "Servizio gia in esecuzione: $Service" "Yellow"
+        return $false
+    }
+    Write-Host "Avvio servizio: $Service"
+    docker-compose -f docker/docker-compose.yml up -d $Service
+    if ($LASTEXITCODE -eq 0) {
+        Write-ColorOutput "Servizio avviato: $Service" "Green"
+        return $true
+    } else {
+        Write-ColorOutput "Errore avvio servizio: $Service" "Red"
+        return $false
+    }
+}
+
 switch ($Action.ToLower()) {
     "start" {
         if ($Clean) {
@@ -458,6 +487,11 @@ switch ($Action.ToLower()) {
     "clean" {
         Clean-All
     }
+    "reset" {
+        Write-ColorOutput "=== RESET CLUSTER ALLA CONFIGURAZIONE DI DEFAULT ===" "Yellow"
+        Clean-All
+        if (-not (Start-Cluster)) { exit 1 }
+    }
     "dashboard" {
         Write-ColorOutput "=== APERTURA DASHBOARD ===" "Blue"
         Write-Host ""
@@ -473,6 +507,24 @@ switch ($Action.ToLower()) {
             Write-ColorOutput "Errore durante la copia dei file di output" "Red"
             exit 1
         }
+    }
+    "add-master" {
+        Write-ColorOutput "=== AGGIUNTA MASTER ===" "Cyan"
+        $candidates = @("master1", "master2")
+        $started = $false
+        foreach ($svc in $candidates) {
+            if (Start-ServiceIfStopped -Service $svc) { $started = $true; break }
+        }
+        if (-not $started) { Write-ColorOutput "Nessun master aggiunto (tutti gia attivi)" "Yellow" }
+    }
+    "add-worker" {
+        Write-ColorOutput "=== AGGIUNTA WORKER ===" "Cyan"
+        $candidates = @("worker1", "worker2")
+        $started = $false
+        foreach ($svc in $candidates) {
+            if (Start-ServiceIfStopped -Service $svc) { $started = $true; break }
+        }
+        if (-not $started) { Write-ColorOutput "Nessun worker aggiunto (tutti gia attivi)" "Yellow" }
     }
     default {
         Write-ColorOutput "Azione non riconosciuta: $Action" "Red"

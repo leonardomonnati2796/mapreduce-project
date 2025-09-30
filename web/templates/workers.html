@@ -72,7 +72,7 @@
                 <div class="card metric-card success">
                     <div class="card-body">
                         <i class="fas fa-check-circle metric-icon"></i>
-                        <div class="metric-value">{{$active := 0}}{{range .Workers}}{{if eq .Status "active"}}{{$active = add $active 1}}{{end}}{{end}}{{$active}}</div>
+                        <div class="metric-value">{{.ActiveWorkers}}</div>
                         <div class="metric-label">Active Workers</div>
                     </div>
                 </div>
@@ -81,7 +81,7 @@
                 <div class="card metric-card warning">
                     <div class="card-body">
                         <i class="fas fa-exclamation-triangle metric-icon"></i>
-                        <div class="metric-value">{{$degraded := 0}}{{range .Workers}}{{if eq .Status "degraded"}}{{$degraded = add $degraded 1}}{{end}}{{end}}{{$degraded}}</div>
+                        <div class="metric-value">{{.DegradedWorkers}}</div>
                         <div class="metric-label">Degraded Workers</div>
                     </div>
                 </div>
@@ -90,7 +90,7 @@
                 <div class="card metric-card danger">
                     <div class="card-body">
                         <i class="fas fa-times-circle metric-icon"></i>
-                        <div class="metric-value">{{$failed := 0}}{{range .Workers}}{{if eq .Status "failed"}}{{$failed = add $failed 1}}{{end}}{{end}}{{$failed}}</div>
+                        <div class="metric-value">{{.FailedWorkers}}</div>
                         <div class="metric-label">Failed Workers</div>
                     </div>
                 </div>
@@ -219,7 +219,7 @@
                                         <i class="fas fa-check-circle fa-2x me-3"></i>
                                         <div>
                                             <h6 class="mb-1">Healthy Workers</h6>
-                                            <p class="mb-0">{{$active := 0}}{{range .Workers}}{{if eq .Status "active"}}{{$active = add $active 1}}{{end}}{{end}}{{$active}} workers operating normally</p>
+                                            <p class="mb-0">{{.ActiveWorkers}} workers operating normally</p>
                                         </div>
                                     </div>
                                 </div>
@@ -230,7 +230,7 @@
                                         <i class="fas fa-exclamation-triangle fa-2x me-3"></i>
                                         <div>
                                             <h6 class="mb-1">Degraded Workers</h6>
-                                            <p class="mb-0">{{$degraded := 0}}{{range .Workers}}{{if eq .Status "degraded"}}{{$degraded = add $degraded 1}}{{end}}{{end}}{{$degraded}} worker experiencing issues</p>
+                                            <p class="mb-0">{{.DegradedWorkers}} worker experiencing issues</p>
                                         </div>
                                     </div>
                                 </div>
