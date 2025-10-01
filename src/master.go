@@ -166,6 +166,8 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 					fmt.Printf("[Master] Job completato - transizione a DonePhase\n")
 					// Copia i file di output dal volume Docker alla cartella locale
 					m.copyOutputFilesToLocal()
+					// Backup su S3 se abilitato
+					m.backupToS3()
 				}
 			}
 		} else {
@@ -1365,6 +1367,43 @@ func (m *Master) createUnifiedOutputFileInDocker() {
 	fmt.Fprintf(finalFile, "=====================================\n")
 
 	fmt.Printf("[Master] File finale unificato Docker creato: %s (%d record totali)\n", unifiedFile, totalRecords)
+}
+
+// backupToS3 esegue un backup su S3 se abilitato
+func (m *Master) backupToS3() {
+	if os.Getenv("S3_SYNC_ENABLED") != "true" {
+		fmt.Println("[Master] S3 sync non abilitato, salto backup")
+		return
+	}
+
+	fmt.Println("[Master] Iniziando backup su S3...")
+	
+	s3Config := GetS3ConfigFromEnv()
+	if s3Client, err := NewS3Client(s3Config); err != nil {
+		fmt.Printf("[Master] Errore creazione client S3: %v\n", err)
+		return
+	} else {
+		// Backup dei file di output
+		if err := s3Client.SyncDirectory("/tmp/mapreduce/output", "output/"); err != nil {
+			fmt.Printf("[Master] Errore backup output su S3: %v\n", err)
+		} else {
+			fmt.Println("[Master] Backup output su S3 completato")
+		}
+
+		// Backup dei file intermedi
+		if err := s3Client.SyncDirectory("/tmp/mapreduce/intermediate", "intermediate/"); err != nil {
+			fmt.Printf("[Master] Errore backup intermediate su S3: %v\n", err)
+		} else {
+			fmt.Println("[Master] Backup intermediate su S3 completato")
+		}
+
+		// Backup completo con timestamp
+		if err := s3Client.BackupToS3("/tmp/mapreduce"); err != nil {
+			fmt.Printf("[Master] Errore backup completo su S3: %v\n", err)
+		} else {
+			fmt.Println("[Master] Backup completo su S3 completato")
+		}
+	}
 }
 
 // startClusterManagementMonitor avvia il monitor per la gestione dinamica del cluster

@@ -1,0 +1,72 @@
+# --- Fase 1: Build ---
+FROM golang:1.19-alpine AS builder
+WORKDIR /app
+
+# Configura Go per AWS
+ENV GOPROXY=https://proxy.golang.org,direct
+ENV GOSUMDB=sum.golang.org
+ENV CGO_ENABLED=0
+ENV GOOS=linux
+ENV GOARCH=amd64
+
+# Installa dipendenze per AWS SDK
+RUN apk add --no-cache git ca-certificates
+
+# Copia tutto il progetto
+COPY . .
+
+# Compila l'applicazione principale
+RUN go build -o mapreduce ./src
+
+# Compila il servizio S3 sync
+RUN go build -o s3-sync ./cmd/s3-sync
+
+# --- Fase 2: Release ---
+FROM alpine:latest
+WORKDIR /root/
+
+# Installa dipendenze per AWS e monitoring
+RUN apk --no-cache add \
+    ca-certificates \
+    docker-cli \
+    bash \
+    curl \
+    wget \
+    aws-cli \
+    jq \
+    tzdata
+
+# Copia i binari compilati
+COPY --from=builder /app/mapreduce .
+COPY --from=builder /app/s3-sync .
+COPY --from=builder /app/data ./data
+COPY --from=builder /app/web ./web
+COPY --from=builder /app/scripts ./scripts
+
+# Crea directory per dati temporanei
+RUN mkdir -p /tmp/mapreduce /var/log/mapreduce
+
+# Configura timezone
+ENV TZ=UTC
+
+# Configura AWS CLI
+RUN mkdir -p ~/.aws
+
+# Health check script
+COPY docker/healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Script di avvio
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Espone le porte
+EXPOSE 8000 8001 8002 8080 9090 1234 1235 1236
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /usr/local/bin/healthcheck.sh
+
+# Entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["./mapreduce"]

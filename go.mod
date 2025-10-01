@@ -3,6 +3,7 @@ module mapreduce
 go 1.19
 
 require (
+	github.com/aws/aws-sdk-go v1.50.0
 	github.com/gin-gonic/gin v1.10.1
 	github.com/gorilla/websocket v1.5.1
 	github.com/hashicorp/go-hclog v1.6.2
@@ -35,6 +36,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/hashicorp/raft-boltdb v0.0.0-20250701115049-6cdf087e85ed // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/kr/text v0.2.0 // indirect

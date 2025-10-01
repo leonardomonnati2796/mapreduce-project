@@ -35,6 +35,22 @@ func main() {
 		fmt.Printf("Warning: Failed to load config: %v, using defaults\n", err)
 	}
 
+	// Inizializza S3 se abilitato
+	if os.Getenv("S3_SYNC_ENABLED") == "true" {
+		s3Config := GetS3ConfigFromEnv()
+		if s3Client, err := NewS3Client(s3Config); err == nil {
+			fmt.Printf("S3 client inizializzato: bucket=%s, region=%s\n", s3Config.Bucket, s3Config.Region)
+			// Avvia il servizio di sincronizzazione in background
+			go func() {
+				if syncService, err := NewS3SyncService(s3Config); err == nil {
+					syncService.Start()
+				}
+			}()
+		} else {
+			fmt.Printf("Warning: Failed to initialize S3 client: %v\n", err)
+		}
+	}
+
 	role := os.Args[1]
 	switch role {
 	case "master":
