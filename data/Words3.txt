@@ -1,0 +1,6 @@
+Il machine learning utilizza algoritmi per identificare pattern nei dati.
+Le reti neurali artificiali sono ispirate al funzionamento del cervello umano.
+L'apprendimento supervisionato richiede dataset etichettati per l'addestramento.
+L'apprendimento non supervisionato scopre strutture nascoste nei dati.
+Il deep learning usa reti neurali profonde per compiti complessi come riconoscimento immagini e elaborazione linguaggio naturale.
+L'intelligenza artificiale sta trasformando settori come sanità, finanza e trasporti.

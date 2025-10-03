@@ -1,0 +1,140 @@
+{
+  "testSuite": {
+    "name": "MapReduce Optimized Test Suite",
+    "version": "2.0.0",
+    "description": "Comprehensive test suite for MapReduce project with optimizations",
+    "author": "MapReduce Team",
+    "lastUpdated": "2024-01-01"
+  },
+  "categories": {
+    "core": {
+      "name": "Core Functions",
+      "description": "Tests MapReduce core functions (Map, Reduce, hashing, file operations)",
+      "script": "test-core-functions.ps1",
+      "parallel": false,
+      "dependencies": [],
+      "timeout": 300,
+      "enabled": true
+    },
+    "raft": {
+      "name": "Raft Consensus",
+      "description": "Tests Raft consensus algorithm and leader election",
+      "script": "test-raft-consensus.ps1",
+      "parallel": false,
+      "dependencies": ["core"],
+      "timeout": 120,
+      "enabled": true
+    },
+    "integration": {
+      "name": "Integration Tests",
+      "description": "Tests complete MapReduce pipeline and job processing",
+      "script": "test-integration.ps1",
+      "parallel": false,
+      "dependencies": ["core", "raft"],
+      "timeout": 300,
+      "enabled": true
+    },
+    "api": {
+      "name": "API Tests",
+      "description": "Tests all REST API endpoints and error handling",
+      "script": "test-api-comprehensive.ps1",
+      "parallel": true,
+      "dependencies": ["core"],
+      "timeout": 180,
+      "enabled": true
+    },
+    "dashboard": {
+      "name": "Dashboard Tests",
+      "description": "Tests web interface and real-time updates",
+      "script": "test-dashboard-comprehensive.ps1",
+      "parallel": true,
+      "dependencies": ["api"],
+      "timeout": 120,
+      "enabled": true
+    },
+    "cluster": {
+      "name": "Cluster Management",
+      "description": "Tests dynamic cluster management and scaling",
+      "script": "test-cluster-management.ps1",
+      "parallel": false,
+      "dependencies": ["raft", "api"],
+      "timeout": 180,
+      "enabled": true
+    }
+  },
+  "performance": {
+    "enabled": false,
+    "iterations": 5,
+    "thresholds": {
+      "apiResponseTime": 1000,
+      "dashboardLoadTime": 2000,
+      "clusterScalingTime": 3000
+    }
+  },
+  "faultTolerance": {
+    "enabled": false,
+    "simulationTypes": ["masterFailure", "workerFailure", "networkPartition"],
+    "recoveryTime": 30
+  },
+  "s3": {
+    "enabled": false,
+    "bucket": "",
+    "region": "us-east-1",
+    "syncEnabled": false
+  },
+  "output": {
+    "formats": ["console", "json", "xml"],
+    "defaultFormat": "console",
+    "includeMetrics": true,
+    "includePerformance": false
+  },
+  "parallel": {
+    "enabled": false,
+    "maxJobs": 5,
+    "timeout": 300
+  },
+  "retry": {
+    "enabled": true,
+    "maxAttempts": 3,
+    "delay": 2,
+    "backoff": "exponential"
+  },
+  "timeouts": {
+    "default": 30,
+    "longRunning": 300,
+    "parallel": 600
+  },
+  "legacy": {
+    "migration": {
+      "enabled": true,
+      "backup": true,
+      "replace": true,
+      "cleanup": true
+    },
+    "compatibility": {
+      "maintainWrappers": true,
+      "redirectToOptimized": true
+    }
+  },
+  "monitoring": {
+    "enabled": false,
+    "metrics": ["responseTime", "successRate", "errorRate"],
+    "alerts": {
+      "highErrorRate": 0.1,
+      "slowResponse": 5000
+    }
+  },
+  "ci": {
+    "enabled": false,
+    "pipeline": {
+      "stages": ["unit", "integration", "performance"],
+      "parallel": true,
+      "timeout": 600
+    },
+    "reporting": {
+      "format": "json",
+      "file": "test-results.json",
+      "upload": false
+    }
+  }
+}

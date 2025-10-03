@@ -1,0 +1,243 @@
+trigger:
+- main
+- develop
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  buildConfiguration: 'Release'
+  testEnvironment: 'local'
+  testCategories: 'core,raft,integration,dashboard,websocket,cluster'
+
+stages:
+- stage: Test
+  displayName: 'Run Test Suite'
+  jobs:
+  - job: CoreTests
+    displayName: 'Core Function Tests'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Core Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("core") -Environment "$(testEnvironment)" -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Core Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+  - job: RaftTests
+    displayName: 'Raft Consensus Tests'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Raft Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("raft") -Environment "$(testEnvironment)" -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Raft Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+  - job: IntegrationTests
+    displayName: 'Integration Tests'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Integration Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("integration") -Environment "$(testEnvironment)" -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Integration Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+  - job: DashboardTests
+    displayName: 'Dashboard Tests'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Dashboard Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("dashboard") -Environment "$(testEnvironment)" -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Dashboard Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+  - job: WebSocketTests
+    displayName: 'WebSocket Tests'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run WebSocket Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("websocket") -Environment "$(testEnvironment)" -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish WebSocket Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+  - job: ClusterTests
+    displayName: 'Cluster Management Tests'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Cluster Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("cluster") -Environment "$(testEnvironment)" -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Cluster Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+- stage: Performance
+  displayName: 'Performance Tests'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - job: PerformanceTests
+    displayName: 'Performance Test Suite'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Performance Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Performance Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+- stage: Security
+  displayName: 'Security Tests'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - job: SecurityTests
+    displayName: 'Security Test Suite'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Security Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\test-suites\test-dashboard-optimized.ps1 -Verbose
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Security Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+- stage: Coverage
+  displayName: 'Coverage Tests'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - job: CoverageTests
+    displayName: 'Coverage Test Suite'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Coverage Tests'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd test
+          .\run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+    
+    - task: PublishTestResults@2
+      displayName: 'Publish Coverage Test Results'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test/reports/*.xml'
+        mergeTestResults: true
+        failTaskOnFailedTests: true
+      condition: always()
+
+- stage: Publish
+  displayName: 'Publish Results'
+  dependsOn: [Test, Performance, Security, Coverage]
+  condition: always()
+  jobs:
+  - job: PublishResults
+    displayName: 'Publish Test Results'
+    steps:
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Test Reports'
+      inputs:
+        pathToPublish: 'test/reports'
+        artifactName: 'test-reports'
+        publishLocation: 'Container'
+      condition: always()
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Test Logs'
+      inputs:
+        pathToPublish: 'test/logs'
+        artifactName: 'test-logs'
+        publishLocation: 'Container'
+      condition: always()

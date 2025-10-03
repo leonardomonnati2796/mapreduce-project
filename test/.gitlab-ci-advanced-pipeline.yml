@@ -1,0 +1,223 @@
+stages:
+  - setup
+  - test
+  - performance
+  - security
+  - coverage
+  - publish
+
+variables:
+  TEST_ENVIRONMENT: "local"
+  BASE_URL: "http://localhost:8080"
+  API_URL: "http://localhost:8080/api/v1"
+  TIMEOUT: "30"
+  TEST_PARALLEL: "true"
+  TEST_VERBOSE: "false"
+  TEST_GENERATE_REPORT: "true"
+  TEST_PERFORMANCE: "true"
+  TEST_SECURITY: "true"
+  TEST_COVERAGE: "true"
+
+# Setup stage
+setup:
+  stage: setup
+  script:
+    - echo "Setting up test environment..."
+    - pwsh -Command "Get-Host"
+    - go version
+    - cd src && go mod download
+  artifacts:
+    paths:
+      - src/
+    expire_in: 1 hour
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Core Function Tests
+core_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("core") -Environment $TEST_ENVIRONMENT -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Raft Consensus Tests
+raft_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("raft") -Environment $TEST_ENVIRONMENT -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Integration Tests
+integration_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("integration") -Environment $TEST_ENVIRONMENT -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Dashboard Tests
+dashboard_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("dashboard") -Environment $TEST_ENVIRONMENT -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# WebSocket Tests
+websocket_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("websocket") -Environment $TEST_ENVIRONMENT -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Cluster Tests
+cluster_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("cluster") -Environment $TEST_ENVIRONMENT -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Performance Tests
+performance_tests:
+  stage: performance
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+  when: on_success
+  rules:
+    - if: $TEST_PERFORMANCE == "true"
+
+# Security Tests
+security_tests:
+  stage: security
+  script:
+    - cd test
+    - pwsh -File test-suites/test-dashboard-optimized.ps1 -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+  when: on_success
+  rules:
+    - if: $TEST_SECURITY == "true"
+
+# Coverage Tests
+coverage_tests:
+  stage: coverage
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport:$TEST_GENERATE_REPORT -Verbose:$TEST_VERBOSE
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+  when: on_success
+  rules:
+    - if: $TEST_COVERAGE == "true"
+
+# Publish Results
+publish_results:
+  stage: publish
+  script:
+    - echo "Publishing test results..."
+    - ls -la test/reports/
+  artifacts:
+    paths:
+      - test/reports/
+      - test/logs/
+    expire_in: 1 month
+  only:
+    - main
+    - develop
+  when: always
+
+# Cleanup
+cleanup:
+  stage: publish
+  script:
+    - echo "Cleaning up test environment..."
+    - pkill -f "go run main.go" || true
+  when: always
+  allow_failure: true

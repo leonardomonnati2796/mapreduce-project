@@ -1,32 +1,126 @@
-# Esempio di configurazione Terraform per MapReduce su AWS
-# Copia questo file come terraform.tfvars e modifica i valori
+# Terraform Variables for MapReduce AWS Deployment
+# Copy this file to terraform.tfvars and customize the values
 
-# Regione AWS
+# AWS Configuration
 aws_region = "us-east-1"
+aws_account_id = ""
 
-# Nome del progetto
+# Project Configuration
 project_name = "mapreduce"
+environment = "prod"
+version = "1.0.0"
 
-# Configurazione VPC
-vpc_cidr = "10.0.0.0/16"
-public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
-private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
+# GitHub Repository
+repo_url    = "https://github.com/your-user/your-repo.git"
+repo_branch = "main"
 
-# Configurazione istanze EC2
+# EC2 Configuration
 instance_type = "t3.medium"
+min_instances = 2
+max_instances = 10
+desired_instances = 3
+key_pair_name = "mapreduce-key-pair"
 
-# Auto Scaling Group
-min_instances = 1
-max_instances = 5
-desired_instances = 2
+# Load Balancer Configuration
+alb_name = "mapreduce-alb"
+alb_scheme = "internet-facing"
+alb_type = "application"
+alb_ip_address_type = "ipv4"
 
-# Ambiente
-environment = "production"
+# S3 Configuration
+s3_bucket_name = "mapreduce-storage"
+s3_backup_bucket = "mapreduce-backup"
+s3_terraform_bucket = "mapreduce-terraform-state"
 
-# Tag aggiuntivi
-tags = {
-  Project     = "MapReduce"
-  Environment = "production"
-  Owner       = "your-team"
-  CostCenter  = "engineering"
-}
+# Database Configuration (if using RDS)
+db_instance_class = "db.t3.micro"
+db_engine = "postgres"
+db_engine_version = "13.7"
+db_name = "mapreduce"
+db_username = "mapreduce"
+db_password = ""
+
+# Monitoring Configuration
+cloudwatch_log_group = "/aws/ec2/mapreduce"
+cloudwatch_retention_days = 30
+alarm_email = "admin@example.com"
+
+# Security Configuration
+allowed_cidr_blocks = ["0.0.0.0/0"]
+ssh_cidr_blocks = ["0.0.0.0/0"]
+http_cidr_blocks = ["0.0.0.0/0"]
+https_cidr_blocks = ["0.0.0.0/0"]
+
+# Application Configuration
+app_port = 8080
+dashboard_port = 3000
+worker_port = 8081
+master_port = 8082
+
+# Docker Configuration
+docker_registry = ""
+docker_image_tag = "latest"
+docker_compose_file = "docker-compose.aws.yml"
+
+# Backup Configuration
+backup_schedule = "0 2 * * *"
+backup_retention_days = 30
+backup_encryption = true
+
+# Auto Scaling Configuration
+scale_up_cooldown = 300
+scale_down_cooldown = 300
+target_cpu_utilization = 70
+target_memory_utilization = 80
+
+# Health Check Configuration
+health_check_path = "/health"
+health_check_interval = 30
+health_check_timeout = 5
+health_check_threshold = 2
+health_check_unhealthy_threshold = 3
+
+# Logging Configuration
+log_level = "info"
+log_format = "json"
+log_output = "stdout"
+
+# Performance Configuration
+worker_threads = 4
+max_connections = 1000
+connection_timeout = 30
+read_timeout = 60
+write_timeout = 60
+
+# Security Headers
+security_headers = true
+cors_origins = "*"
+cors_methods = "GET,POST,PUT,DELETE,OPTIONS"
+cors_headers = "Content-Type,Authorization"
+
+# Rate Limiting
+rate_limit_enabled = true
+rate_limit_requests = 100
+rate_limit_window = 60
+
+# SSL/TLS Configuration
+ssl_enabled = true
+ssl_certificate_arn = ""
+ssl_policy = "ELBSecurityPolicy-TLS-1-2-2017-01"
+
+# VPC Configuration
+vpc_cidr = "10.0.0.0/16"
+public_subnet_cidr_1 = "10.0.1.0/24"
+public_subnet_cidr_2 = "10.0.2.0/24"
+private_subnet_cidr_1 = "10.0.10.0/24"
+private_subnet_cidr_2 = "10.0.20.0/24"
+
+# Availability Zones
+az_1 = "us-east-1a"
+az_2 = "us-east-1b"
+
+# Tags
+tag_environment = "production"
+tag_project = "mapreduce"
+tag_owner = "devops"
+tag_cost_center = "engineering"

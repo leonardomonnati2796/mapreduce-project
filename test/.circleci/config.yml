@@ -1,0 +1,168 @@
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: mcr.microsoft.com/powershell:7.2-ubuntu-20.04
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Install Go
+          command: |
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+            tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> ~/.bashrc
+            source ~/.bashrc
+      - run:
+          name: Install dependencies
+          command: |
+            cd src
+            go mod download
+      - run:
+          name: Start MapReduce system
+          command: |
+            cd src
+            go run main.go &
+            sleep 10
+      - run:
+          name: Run tests
+          command: |
+            cd test
+            pwsh -File run-tests-optimized.ps1 -Environment local -GenerateReport -Verbose
+      - run:
+          name: Stop MapReduce system
+          command: |
+            pkill -f "go run main.go" || true
+      - store_artifacts:
+          path: test/reports/
+          destination: test-reports
+      - store_artifacts:
+          path: test/logs/
+          destination: test-logs
+
+  performance:
+    docker:
+      - image: mcr.microsoft.com/powershell:7.2-ubuntu-20.04
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Install Go
+          command: |
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+            tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> ~/.bashrc
+            source ~/.bashrc
+      - run:
+          name: Install dependencies
+          command: |
+            cd src
+            go mod download
+      - run:
+          name: Start MapReduce system
+          command: |
+            cd src
+            go run main.go &
+            sleep 10
+      - run:
+          name: Run performance tests
+          command: |
+            cd test
+            pwsh -File run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport
+      - run:
+          name: Stop MapReduce system
+          command: |
+            pkill -f "go run main.go" || true
+      - store_artifacts:
+          path: test/reports/
+          destination: performance-reports
+
+  security:
+    docker:
+      - image: mcr.microsoft.com/powershell:7.2-ubuntu-20.04
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Install Go
+          command: |
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+            tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> ~/.bashrc
+            source ~/.bashrc
+      - run:
+          name: Install dependencies
+          command: |
+            cd src
+            go mod download
+      - run:
+          name: Start MapReduce system
+          command: |
+            cd src
+            go run main.go &
+            sleep 10
+      - run:
+          name: Run security tests
+          command: |
+            cd test
+            pwsh -File test-suites/test-dashboard-optimized.ps1 -Verbose
+      - run:
+          name: Stop MapReduce system
+          command: |
+            pkill -f "go run main.go" || true
+      - store_artifacts:
+          path: test/reports/
+          destination: security-reports
+
+  coverage:
+    docker:
+      - image: mcr.microsoft.com/powershell:7.2-ubuntu-20.04
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Install Go
+          command: |
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+            tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> ~/.bashrc
+            source ~/.bashrc
+      - run:
+          name: Install dependencies
+          command: |
+            cd src
+            go mod download
+      - run:
+          name: Start MapReduce system
+          command: |
+            cd src
+            go run main.go &
+            sleep 10
+      - run:
+          name: Run coverage tests
+          command: |
+            cd test
+            pwsh -File run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport
+      - run:
+          name: Stop MapReduce system
+          command: |
+            pkill -f "go run main.go" || true
+      - store_artifacts:
+          path: test/reports/
+          destination: coverage-reports
+
+workflows:
+  version: 2
+  test_suite:
+    jobs:
+      - test
+      - performance:
+          requires:
+            - test
+      - security:
+          requires:
+            - test
+      - coverage:
+          requires:
+            - test

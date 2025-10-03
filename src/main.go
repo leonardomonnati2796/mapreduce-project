@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/rpc"
 	"os"
 	"strconv"
 	"strings"
@@ -16,7 +17,7 @@ const (
 	mainLoopTimeout        = 5 * time.Minute
 	tickerInterval         = 2 * time.Second
 	leaderElectionDelay    = 2 * time.Second
-	nReduce                = 10
+	// nReduce is now calculated dynamically based on worker count
 	// Minimum arguments required
 	minMasterArgs = 4
 	minWorkerArgs = 2
@@ -38,7 +39,7 @@ func main() {
 	// Inizializza S3 se abilitato
 	if os.Getenv("S3_SYNC_ENABLED") == "true" {
 		s3Config := GetS3ConfigFromEnv()
-		if s3Client, err := NewS3Client(s3Config); err == nil {
+		if _, err := NewS3Client(s3Config); err == nil {
 			fmt.Printf("S3 client inizializzato: bucket=%s, region=%s\n", s3Config.Bucket, s3Config.Region)
 			// Avvia il servizio di sincronizzazione in background
 			go func() {
@@ -95,6 +96,10 @@ func runMaster() {
 	raftAddrs := getMasterRaftAddresses()
 	rpcAddrs := getMasterRpcAddresses()
 
+	// Calculate dynamic reducer count based on worker count
+	nReduce := calculateDynamicReducerCount()
+	fmt.Printf("Numero di reducer calcolato dinamicamente: %d\n", nReduce)
+
 	fmt.Printf("Avvio come master %d...\n", me)
 	m, err := MakeMaster(files, nReduce, me, raftAddrs, rpcAddrs)
 	if err != nil {
@@ -103,6 +108,21 @@ func runMaster() {
 	}
 
 	fmt.Printf("[Master %d] Dopo MakeMaster, isDone=%v\n", me, m.Done())
+
+	// Avvia il server di health check per questo master
+	// Usa porte separate per health check: 8100, 8101, 8102
+	healthPort := 8100 + me
+	healthChecker := NewHealthChecker("1.0.0")
+
+	go func() {
+		fmt.Printf("[Master %d] Avvio health check server sulla porta %d\n", me, healthPort)
+		if err := StartHealthCheckServer(healthPort, healthChecker); err != nil {
+			fmt.Printf("[Master %d] Errore health check server: %v\n", me, err)
+		}
+	}()
+
+	// Avvia i controlli di salute periodici
+	go RunHealthChecks(healthChecker)
 
 	// Aspetta che i worker si connettano e che Raft si stabilizzi
 	time.Sleep(raftStabilizationDelay)
@@ -121,8 +141,9 @@ func runMaster() {
 			return
 		case <-ticker.C:
 			if m.Done() {
-				fmt.Printf("[Master %d] Job completato, esco dal loop\n", me)
-				return
+				fmt.Printf("[Master %d] Job completato, rimango attivo per nuovi job...\n", me)
+				// Non esco dal loop, rimango attivo per gestire nuovi job
+				continue
 			}
 			if m.raft == nil || m.raft.State() != raft.Leader {
 				fmt.Printf("[Master %d] Non sono leader, aspetto...\n", me)
@@ -253,6 +274,62 @@ func runLeaderElection() {
 	}
 
 	fmt.Println("\nLeader election completata!")
+}
+
+// calculateDynamicReducerCount calculates the number of reducers based on worker count
+func calculateDynamicReducerCount() int {
+	// Get worker count from environment variable or docker-compose configuration
+	workerCountStr := os.Getenv("WORKER_COUNT")
+	if workerCountStr != "" {
+		if count, err := strconv.Atoi(workerCountStr); err == nil && count > 0 {
+			fmt.Printf("Numero di worker da variabile d'ambiente WORKER_COUNT: %d\n", count)
+			return count
+		}
+	}
+
+	// Try to query existing masters for current worker count
+	rpcAddrs := getMasterRpcAddresses()
+	if len(rpcAddrs) > 0 {
+		// Try to get worker count from any available master
+		for _, addr := range rpcAddrs {
+			if workerCount := queryWorkerCountFromMaster(addr); workerCount > 0 {
+				fmt.Printf("Numero di worker rilevato dal master %s: %d\n", addr, workerCount)
+				return workerCount
+			}
+		}
+
+		// If no master is available yet, estimate based on configuration
+		estimatedWorkers := len(rpcAddrs) // 1 worker per master as default
+		fmt.Printf("Numero di worker stimato da configurazione master: %d\n", estimatedWorkers)
+		return estimatedWorkers
+	}
+
+	// Fallback: default to 3 workers (typical docker-compose setup)
+	defaultWorkerCount := 3
+	fmt.Printf("Usando numero di worker di default: %d\n", defaultWorkerCount)
+	return defaultWorkerCount
+}
+
+// queryWorkerCountFromMaster queries a master for the current worker count
+func queryWorkerCountFromMaster(masterAddr string) int {
+	client, err := rpc.DialHTTP("tcp", masterAddr)
+	if err != nil {
+		return 0 // Master not available
+	}
+	defer client.Close()
+
+	var args GetWorkerCountArgs
+	var reply WorkerCountReply
+	err = client.Call("Master.GetWorkerCount", &args, &reply)
+	if err != nil {
+		return 0 // Error querying master
+	}
+
+	// Return active workers, but at least 1 if there are any workers
+	if reply.ActiveWorkers > 0 {
+		return reply.ActiveWorkers
+	}
+	return 0
 }
 
 // usage stampa le istruzioni di utilizzo del programma e termina con codice di errore

@@ -21,7 +21,9 @@ help:
 	@echo ""
 	@echo "AVVIO E GESTIONE CLUSTER:"
 	@echo "  make docker-start - Avvia Docker Desktop automaticamente"
-	@echo "  make start        - Avvia il cluster MapReduce completo"
+	@echo "  make start        - Avvia il cluster MapReduce completo (con build)"
+	@echo "  make start-fast   - Avvia il cluster velocemente (senza rebuild)"
+	@echo "  make start-quick  - Avvio super veloce (solo se già configurato)"
 	@echo "  make stop         - Ferma il cluster"
 	@echo "  make restart      - Riavvia il cluster"
 	@echo "  make status       - Mostra lo stato del cluster"
@@ -75,6 +77,21 @@ start:
 	@powershell -Command "if (-not (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)) { Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'; Start-Sleep -Seconds 30; Write-Host 'Docker Desktop avviato!' } else { Write-Host 'Docker Desktop gia in esecuzione!' }"
 	@echo "Avvio cluster MapReduce..."
 	$(DOCKER_MANAGER) start
+	@echo "Attesa stabilizzazione cluster (15 secondi)..."
+	@powershell -Command "Start-Sleep -Seconds 15"
+	@echo "Verifica finale stato cluster..."
+	$(DOCKER_MANAGER) health
+
+# Versione veloce - usa immagini esistenti se disponibili
+start-fast:
+	@echo "Avvio rapido cluster MapReduce..."
+	@powershell -Command "if (-not (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)) { Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'; Start-Sleep -Seconds 15; Write-Host 'Docker Desktop avviato!' } else { Write-Host 'Docker Desktop gia in esecuzione!' }"
+	$(DOCKER_MANAGER) start-fast
+
+# Versione super veloce - solo se tutto è già pronto
+start-quick:
+	@echo "Avvio super rapido (solo se cluster già configurato)..."
+	$(DOCKER_MANAGER) start-quick
 
 stop:
 	$(DOCKER_MANAGER) stop

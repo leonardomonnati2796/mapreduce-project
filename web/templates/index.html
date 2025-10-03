@@ -504,17 +504,11 @@
                                     </div>
                                 </div>
                                 <div class="mb-3">
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <label for="nReduce" class="form-label">Number of reduce tasks</label>
-                                            <input type="number" class="form-control" id="nReduce" value="3" min="1" max="10">
-                                        </div>
-                                        <div class="col-md-6">
-                                            <button id="runMapReduce" class="btn btn-primary w-100 mt-4" 
-                                                    onclick="runTextMapReduce()">
-                                                <i class="fas fa-play"></i> Run MapReduce
-                                            </button>
-                                        </div>
+                                    <div class="d-grid">
+                                        <button id="runMapReduce" class="btn btn-primary btn-lg py-3" 
+                                                onclick="runTextMapReduce()">
+                                            <i class="fas fa-play me-2"></i> Run MapReduce
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -526,7 +520,6 @@
                                     <div class="card-body">
                                         <ol class="small">
                                             <li>Paste the text in the input area</li>
-                                            <li>Set the number of reduce tasks</li>
                                             <li>Click "Run MapReduce"</li>
                                             <li>View the results below</li>
                                         </ol>
@@ -825,7 +818,6 @@
 
         async function runTextMapReduce() {
             const textInput = document.getElementById('textInput');
-            const nReduce = document.getElementById('nReduce');
             const runButton = document.getElementById('runMapReduce');
             const loadingSpinner = document.getElementById('loadingSpinner');
             const resultsSection = document.getElementById('resultsSection');
@@ -843,14 +835,14 @@
             
             // Show loading state
             runButton.disabled = true;
-            runButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+            runButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Processing...';
             loadingSpinner.style.display = 'block';
             resultsSection.style.display = 'none';
             
-            // Simulate MapReduce processing locally
+            // Simulate MapReduce processing locally with default 3 reducers
             setTimeout(() => {
                 try {
-                    const result = processTextLocally(textInput.value, parseInt(nReduce.value));
+                    const result = processTextLocally(textInput.value, 3);
                     displayResults(result);
                     resetButtonState();
                 } catch (error) {
@@ -979,7 +971,7 @@
             const loadingSpinner = document.getElementById('loadingSpinner');
             
             runButton.disabled = false;
-            runButton.innerHTML = '<i class="fas fa-play"></i> Run MapReduce';
+            runButton.innerHTML = '<i class="fas fa-play me-2"></i> Run MapReduce';
             loadingSpinner.style.display = 'none';
             
             // Mark processing as complete (auto-refresh will be enabled after 60 seconds in displayResults)

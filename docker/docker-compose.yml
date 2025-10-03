@@ -11,6 +11,8 @@ x-common-vars: &common-vars
   MAPREDUCE_MASTER_TASK_TIMEOUT: "120s"
   MAPREDUCE_MASTER_HEARTBEAT_INTERVAL: "5s"
   MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+  # Dynamic reducer configuration - number of reducers equals number of workers
+  WORKER_COUNT: "3"
 
 # Variabili estese per servizi aggiuntivi
 x-extended-vars: &extended-vars
@@ -22,6 +24,8 @@ x-extended-vars: &extended-vars
   MAPREDUCE_MASTER_TASK_TIMEOUT: "120s"
   MAPREDUCE_MASTER_HEARTBEAT_INTERVAL: "5s"
   MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
+  # Dynamic reducer configuration - number of reducers equals number of workers
+  WORKER_COUNT: "4"
 
 # Configurazione comune per i master
 x-master-config: &master-config
@@ -32,7 +36,7 @@ x-master-config: &master-config
     - mapreduce-net
   volumes:
     - intermediate-data:/tmp/mapreduce
-    - ./data:/root/data:ro
+    - ${PWD}/data:/root/data
   environment:
     <<: *common-vars
     # - RAFT_CLEAN_START: "true"  # Uncomment per pulire i dati Raft (solo per debug)
@@ -50,17 +54,17 @@ x-worker-config: &worker-config
     - mapreduce-net
   volumes:
     - intermediate-data:/tmp/mapreduce
-    - ./data:/root/data:ro
+    - ${PWD}/data:/root/data
   environment:
     RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
     TMP_PATH: "/tmp/mapreduce"
     MAPREDUCE_WORKER_RETRY_INTERVAL: "2s"
     MAPREDUCE_WORKER_MAX_RETRIES: "10"
-  restart: unless-stopped
+  restart: on-failure
   stop_grace_period: 30s
 
-# File di input centralizzato
-x-input-file: &input-file "/root/data/Words.txt"
+# File di input centralizzato (multipli)
+x-input-file: &input-file "/root/data/Words.txt,/root/data/Words2.txt,/root/data/Words3.txt"
 
 services:
   master0:
@@ -70,6 +74,7 @@ services:
     ports:
       - "1234:1234" # Raft
       - "8000:8000" # RPC
+      - "8100:8100" # Health check
       - "9090:9090" # Metrics
 
   master1:
@@ -79,6 +84,7 @@ services:
     ports:
       - "1235:1234"
       - "8001:8001"
+      - "8101:8101" # Health check
 
   master2:
     <<: *master-config
@@ -87,6 +93,7 @@ services:
     ports:
       - "1236:1234"
       - "8002:8002"
+      - "8102:8102" # Health check
 
   worker1:
     <<: *worker-config
@@ -155,7 +162,7 @@ services:
       - "8080:8080"
     volumes:
       - intermediate-data:/tmp/mapreduce
-      - ./data:/root/data:ro
+      - ${PWD}/data:/root/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234"

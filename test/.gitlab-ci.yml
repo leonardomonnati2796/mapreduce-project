@@ -1,0 +1,184 @@
+stages:
+  - test
+  - performance
+  - security
+  - coverage
+  - publish
+
+variables:
+  TEST_ENVIRONMENT: "local"
+  BASE_URL: "http://localhost:8080"
+  API_URL: "http://localhost:8080/api/v1"
+  TIMEOUT: "30"
+
+# Core Function Tests
+core_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("core") -Environment $TEST_ENVIRONMENT -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Raft Consensus Tests
+raft_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("raft") -Environment $TEST_ENVIRONMENT -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Integration Tests
+integration_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("integration") -Environment $TEST_ENVIRONMENT -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Dashboard Tests
+dashboard_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("dashboard") -Environment $TEST_ENVIRONMENT -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# WebSocket Tests
+websocket_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("websocket") -Environment $TEST_ENVIRONMENT -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Cluster Tests
+cluster_tests:
+  stage: test
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("cluster") -Environment $TEST_ENVIRONMENT -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Performance Tests
+performance_tests:
+  stage: performance
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+  when: on_success
+
+# Security Tests
+security_tests:
+  stage: security
+  script:
+    - cd test
+    - pwsh -File test-suites/test-dashboard-optimized.ps1 -Verbose
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+  when: on_success
+
+# Coverage Tests
+coverage_tests:
+  stage: coverage
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport
+  artifacts:
+    reports:
+      junit: test/reports/*.xml
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - merge_requests
+  when: on_success
+
+# Publish Results
+publish_results:
+  stage: publish
+  script:
+    - echo "Publishing test results..."
+    - ls -la test/reports/
+  artifacts:
+    paths:
+      - test/reports/
+      - test/logs/
+    expire_in: 1 month
+  only:
+    - main
+    - develop
+  when: always

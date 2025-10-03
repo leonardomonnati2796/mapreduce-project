@@ -1,0 +1,59 @@
+language: powershell
+
+os:
+  - windows
+
+powershell:
+  - 7.2
+
+env:
+  - TEST_ENVIRONMENT=local
+  - BASE_URL=http://localhost:8080
+  - API_URL=http://localhost:8080/api/v1
+  - TIMEOUT=30
+
+before_install:
+  - choco install go -y
+  - go version
+
+install:
+  - cd src
+  - go mod download
+  - cd ..
+
+before_script:
+  - echo "Starting MapReduce system..."
+  - cd src
+  - Start-Process -FilePath "go" -ArgumentList "run", "main.go" -WindowStyle Hidden
+  - Start-Sleep -Seconds 10
+  - cd ..
+
+script:
+  - cd test
+  - pwsh -File run-tests-optimized.ps1 -Environment $env:TEST_ENVIRONMENT -GenerateReport -Verbose
+
+after_script:
+  - echo "Stopping MapReduce system..."
+  - Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+after_success:
+  - echo "Tests completed successfully!"
+
+after_failure:
+  - echo "Tests failed!"
+  - Get-Content test/logs/*.log -ErrorAction SilentlyContinue
+
+artifacts:
+  paths:
+    - test/reports/
+    - test/logs/
+  expire_in: 1 week
+
+notifications:
+  email:
+    on_success: never
+    on_failure: always
+  slack:
+    on_success: never
+    on_failure: always
+    webhook: $SLACK_WEBHOOK_URL

@@ -1377,7 +1377,7 @@ func (m *Master) backupToS3() {
 	}
 
 	fmt.Println("[Master] Iniziando backup su S3...")
-	
+
 	s3Config := GetS3ConfigFromEnv()
 	if s3Client, err := NewS3Client(s3Config); err != nil {
 		fmt.Printf("[Master] Errore creazione client S3: %v\n", err)
@@ -1556,6 +1556,26 @@ func (m *Master) GetWorkerInfo(args *GetWorkerInfoArgs, reply *WorkerInfoReply) 
 
 	reply.Workers = workers
 	reply.LastSeen = time.Now()
+
+	return nil
+}
+
+// GetWorkerCount restituisce il numero di worker attivi tramite RPC
+func (m *Master) GetWorkerCount(args *GetWorkerCountArgs, reply *WorkerCountReply) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Conta worker attivi (visti negli ultimi 30 secondi)
+	now := time.Now()
+	activeWorkers := 0
+	for _, lastSeen := range m.workerLastSeen {
+		if now.Sub(lastSeen) <= 30*time.Second {
+			activeWorkers++
+		}
+	}
+
+	reply.ActiveWorkers = activeWorkers
+	reply.TotalWorkers = len(m.workers)
 
 	return nil
 }

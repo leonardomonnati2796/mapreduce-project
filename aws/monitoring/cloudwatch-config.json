@@ -1,0 +1,120 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "metrics": {
+    "namespace": "MapReduce/EC2",
+    "metrics_collected": {
+      "cpu": {
+        "measurement": [
+          "cpu_usage_idle",
+          "cpu_usage_iowait",
+          "cpu_usage_user",
+          "cpu_usage_system"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ],
+        "totalcpu": false
+      },
+      "disk": {
+        "measurement": [
+          "used_percent"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "diskio": {
+        "measurement": [
+          "io_time",
+          "read_bytes",
+          "write_bytes",
+          "reads",
+          "writes"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "mem": {
+        "measurement": [
+          "mem_used_percent"
+        ],
+        "metrics_collection_interval": 60
+      },
+      "netstat": {
+        "measurement": [
+          "tcp_established",
+          "tcp_time_wait"
+        ],
+        "metrics_collection_interval": 60
+      },
+      "swap": {
+        "measurement": [
+          "swap_used_percent"
+        ],
+        "metrics_collection_interval": 60
+      }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/mapreduce/master.log",
+            "log_group_name": "/aws/ec2/mapreduce/master",
+            "log_stream_name": "{instance_id}-master",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/mapreduce/worker.log",
+            "log_group_name": "/aws/ec2/mapreduce/worker",
+            "log_stream_name": "{instance_id}-worker",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/mapreduce/dashboard.log",
+            "log_group_name": "/aws/ec2/mapreduce/dashboard",
+            "log_stream_name": "{instance_id}-dashboard",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/nginx/access.log",
+            "log_group_name": "/aws/ec2/mapreduce/nginx-access",
+            "log_stream_name": "{instance_id}-nginx-access",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/nginx/error.log",
+            "log_group_name": "/aws/ec2/mapreduce/nginx-error",
+            "log_stream_name": "{instance_id}-nginx-error",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/docker.log",
+            "log_group_name": "/aws/ec2/mapreduce/docker",
+            "log_stream_name": "{instance_id}-docker",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  },
+  "processes": {
+    "processes_collected": {
+      "processes": [
+        "mapreduce-master",
+        "mapreduce-worker",
+        "nginx",
+        "redis-server",
+        "docker"
+      ]
+    }
+  }
+}

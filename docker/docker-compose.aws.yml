@@ -1,217 +1,244 @@
-# MapReduce Cluster per AWS EC2 con S3 e Load Balancer
-# Configurazione ottimizzata per deployment su AWS
-
 version: '3.8'
 
-# Variabili di configurazione per AWS
-x-common-vars: &common-vars
-  # Configurazione AWS
-  AWS_REGION: "${AWS_REGION:-us-east-1}"
-  AWS_S3_BUCKET: "${AWS_S3_BUCKET:-mapreduce-data-bucket}"
-  AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
-  AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
-  
-  # Configurazione cluster per AWS
-  RAFT_ADDRESSES: "${RAFT_ADDRESSES:-master0:1234,master1:1234,master2:1234}"
-  RPC_ADDRESSES: "${RPC_ADDRESSES:-master0:8000,master1:8001,master2:8002}"
-  TMP_PATH: "/tmp/mapreduce"
-  
-  # Configurazione per AWS
-  METRICS_ENABLED: "true"
-  METRICS_PORT: "9090"
-  MAPREDUCE_MASTER_TASK_TIMEOUT: "300s"
-  MAPREDUCE_MASTER_HEARTBEAT_INTERVAL: "10s"
-  MAPREDUCE_WORKER_RETRY_INTERVAL: "5s"
-  
-  # Configurazione per load balancer
-  HEALTH_CHECK_ENABLED: "true"
-  HEALTH_CHECK_INTERVAL: "30s"
-  HEALTH_CHECK_TIMEOUT: "10s"
-
-# Configurazione comune per i master
-x-master-config: &master-config
-  build:
-    context: ..
-    dockerfile: docker/Dockerfile.aws
-  networks:
-    - mapreduce-net
-  volumes:
-    - intermediate-data:/tmp/mapreduce
-    - ./data:/root/data:ro
-  environment:
-    <<: *common-vars
-  restart: unless-stopped
-  stop_grace_period: 60s
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
-    start_period: 60s
-
-# Configurazione comune per i worker
-x-worker-config: &worker-config
-  build:
-    context: ..
-    dockerfile: docker/Dockerfile.aws
-  command: ["./mapreduce", "worker"]
-  depends_on: ["master0", "master1", "master2"]
-  networks:
-    - mapreduce-net
-  volumes:
-    - intermediate-data:/tmp/mapreduce
-    - ./data:/root/data:ro
-  environment:
-    <<: *common-vars
-    MAPREDUCE_WORKER_MAX_RETRIES: "20"
-  restart: unless-stopped
-  stop_grace_period: 30s
-  deploy:
-    replicas: 3
-
-# File di input centralizzato
-x-input-file: &input-file "/root/data/Words.txt"
-
 services:
-  # Master nodes con configurazione AWS
-  master0:
-    <<: *master-config
-    hostname: master0
-    command: ["./mapreduce", "master", "0", *input-file]
-    ports:
-      - "1234:1234" # Raft
-      - "8000:8000" # RPC
-      - "9090:9090" # Metrics
-    environment:
-      <<: *common-vars
-      MASTER_ID: "0"
-      MASTER_ROLE: "primary"
-
-  master1:
-    <<: *master-config
-    hostname: master1
-    command: ["./mapreduce", "master", "1", *input-file]
-    ports:
-      - "1235:1234"
-      - "8001:8001"
-    environment:
-      <<: *common-vars
-      MASTER_ID: "1"
-      MASTER_ROLE: "secondary"
-
-  master2:
-    <<: *master-config
-    hostname: master2
-    command: ["./mapreduce", "master", "2", *input-file]
-    ports:
-      - "1236:1234"
-      - "8002:8002"
-    environment:
-      <<: *common-vars
-      MASTER_ID: "2"
-      MASTER_ROLE: "secondary"
-
-  # Worker nodes
-  worker1:
-    <<: *worker-config
-    environment:
-      <<: *common-vars
-      WORKER_ID: "worker-1"
-      WORKER_REGION: "${AWS_REGION:-us-east-1}"
-
-  worker2:
-    <<: *worker-config
-    environment:
-      <<: *common-vars
-      WORKER_ID: "worker-2"
-      WORKER_REGION: "${AWS_REGION:-us-east-1}"
-
-  worker3:
-    <<: *worker-config
-    environment:
-      <<: *common-vars
-      WORKER_ID: "worker-3"
-      WORKER_REGION: "${AWS_REGION:-us-east-1}"
-
-  # Dashboard con configurazione AWS
-  dashboard:
+  mapreduce-dashboard:
     build:
       context: ..
       dockerfile: docker/Dockerfile.aws
-    command: ["./mapreduce", "dashboard", "--port", "8080"]
-    depends_on: ["master0", "master1", "master2"]
-    networks:
-      - mapreduce-net
+    container_name: mapreduce-dashboard
     ports:
       - "8080:8080"
-    volumes:
-      - intermediate-data:/tmp/mapreduce
-      - ./data:/root/data:ro
     environment:
-      <<: *common-vars
-      # WebSocket configuration
-      WEBSOCKET_ENABLED: "true"
-      WEBSOCKET_UPDATE_INTERVAL: "5s"
-      # AWS specific
-      DASHBOARD_AWS_MODE: "true"
-      S3_SYNC_ENABLED: "true"
+      - PORT=8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - INSTANCE_IP=${INSTANCE_IP}
+      - ENVIRONMENT=aws
+      - LOG_LEVEL=info
+    volumes:
+      - ../data:/app/data
+      - ../web:/app/web
+      - /var/log/mapreduce:/app/logs
     restart: unless-stopped
-    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
-
-  # Load Balancer (nginx)
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - dashboard
-      - master0
-      - master1
-      - master2
+      start_period: 40s
     networks:
-      - mapreduce-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # S3 Sync Service
-  s3-sync:
+  mapreduce-master-1:
     build:
       context: ..
       dockerfile: docker/Dockerfile.aws
-    command: ["./s3-sync"]
-    depends_on: ["master0", "master1", "master2"]
-    networks:
-      - mapreduce-net
-    volumes:
-      - intermediate-data:/tmp/mapreduce
-      - ./data:/root/data:ro
+    container_name: mapreduce-master-1
     environment:
-      <<: *common-vars
-      S3_SYNC_INTERVAL: "60s"
-      S3_BACKUP_ENABLED: "true"
+      - ROLE=master
+      - MASTER_ID=master-1
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - ENVIRONMENT=aws
+    depends_on:
+      - mapreduce-dashboard
     restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mapreduce-master-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.aws
+    container_name: mapreduce-master-2
+    environment:
+      - ROLE=master
+      - MASTER_ID=master-2
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - ENVIRONMENT=aws
+    depends_on:
+      - mapreduce-dashboard
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mapreduce-master-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.aws
+    container_name: mapreduce-master-3
+    environment:
+      - ROLE=master
+      - MASTER_ID=master-3
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - ENVIRONMENT=aws
+    depends_on:
+      - mapreduce-dashboard
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mapreduce-worker-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.aws
+    container_name: mapreduce-worker-1
+    environment:
+      - ROLE=worker
+      - WORKER_ID=worker-1
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - ENVIRONMENT=aws
+    depends_on:
+      - mapreduce-dashboard
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mapreduce-worker-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.aws
+    container_name: mapreduce-worker-2
+    environment:
+      - ROLE=worker
+      - WORKER_ID=worker-2
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - ENVIRONMENT=aws
+    depends_on:
+      - mapreduce-dashboard
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mapreduce-worker-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.aws
+    container_name: mapreduce-worker-3
+    environment:
+      - ROLE=worker
+      - WORKER_ID=worker-3
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - INSTANCE_ID=${INSTANCE_ID}
+      - ENVIRONMENT=aws
+    depends_on:
+      - mapreduce-dashboard
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # S3 Sync Service
+  s3-sync:
+    image: amazon/aws-cli:latest
+    container_name: mapreduce-s3-sync
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET}
+    volumes:
+      - ../data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c "
+        while true; do
+          echo 'Syncing data to S3...'
+          aws s3 sync /data s3://$$S3_BUCKET/data/ --delete
+          echo 'S3 sync completed at $$(date)'
+          sleep 300
+        done
+      "
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Health Check Service
+  health-check:
+    image: curlimages/curl:latest
+    container_name: mapreduce-health-check
+    command: >
+      sh -c "
+        while true; do
+          echo 'Performing health check...'
+          curl -f http://mapreduce-dashboard:8080/health || echo 'Health check failed'
+          sleep 60
+        done
+      "
+    depends_on:
+      - mapreduce-dashboard
+    restart: unless-stopped
+    networks:
+      - mapreduce-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
-  mapreduce-net:
+  mapreduce-network:
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.0.0/16
 
 volumes:
-  intermediate-data:
+  mapreduce-data:
+    driver: local
+  mapreduce-logs:
     driver: local

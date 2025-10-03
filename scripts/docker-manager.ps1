@@ -69,6 +69,47 @@ function Start-Cluster {
     Write-ColorOutput "=== AVVIO CLUSTER MAPREDUCE ===" "Blue"
     Write-Host ""
     
+    # Controlli preliminari in parallelo per velocità
+    $dockerCheck = Start-Job -ScriptBlock { docker version 2>$null }
+    $composeCheck = Test-Path "docker/docker-compose.yml"
+    $dataCheck = Test-Path "data/Words.txt"
+    
+    # Attendi controllo Docker
+    $dockerResult = Wait-Job $dockerCheck -Timeout 3
+    Remove-Job $dockerCheck -Force
+    
+    if (-not $dockerResult -or $dockerResult.State -ne "Completed") {
+        Write-ColorOutput "ERRORE: Docker non è in esecuzione!" "Red"
+        return $false
+    }
+    
+    if (-not $composeCheck) {
+        Write-ColorOutput "ERRORE: docker-compose.yml non trovato!" "Red"
+        return $false
+    }
+    
+    if (-not $dataCheck) {
+        Write-ColorOutput "ERRORE: File di input data/Words.txt non trovato!" "Red"
+        return $false
+    }
+    
+    Write-Host "Avviando il cluster..."
+    docker-compose -f docker/docker-compose.yml up -d --build
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-ColorOutput "Cluster MapReduce avviato con successo!" "Green"
+        Write-Host "Dashboard: http://localhost:8080"
+        return $true
+    } else {
+        Write-ColorOutput "Errore durante l avvio del cluster" "Red"
+        return $false
+    }
+}
+
+function Start-ClusterFast {
+    Write-ColorOutput "=== AVVIO RAPIDO CLUSTER MAPREDUCE ===" "Green"
+    Write-Host ""
+    
     if (-not (Test-DockerRunning)) {
         return $false
     }
@@ -83,8 +124,37 @@ function Start-Cluster {
         return $false
     }
     
-    Write-Host "Avviando il cluster..."
-    docker-compose -f docker/docker-compose.yml up -d --build
+    Write-Host "Avviando il cluster (modalità veloce - senza rebuild)..."
+    docker-compose -f docker/docker-compose.yml up -d
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-ColorOutput "Cluster MapReduce avviato con successo!" "Green"
+        Write-Host "Dashboard: http://localhost:8080"
+        return $true
+    } else {
+        Write-ColorOutput "Errore durante l avvio del cluster" "Red"
+        return $false
+    }
+}
+
+function Start-ClusterQuick {
+    Write-ColorOutput "=== AVVIO SUPER RAPIDO CLUSTER MAPREDUCE ===" "Cyan"
+    Write-Host ""
+    
+    if (-not (Test-DockerRunning)) {
+        return $false
+    }
+    
+    # Controlla se i container sono già in esecuzione
+    $running = Get-RunningServices
+    if ($running.Count -ge 6) {
+        Write-ColorOutput "Cluster già in esecuzione!" "Yellow"
+        Show-Status
+        return $true
+    }
+    
+    Write-Host "Avviando il cluster (modalità super veloce)..."
+    docker-compose -f docker/docker-compose.yml up -d
     
     if ($LASTEXITCODE -eq 0) {
         Write-ColorOutput "Cluster MapReduce avviato con successo!" "Green"
@@ -137,46 +207,74 @@ function Test-ClusterHealth {
     Write-ColorOutput "=== HEALTH CHECK CLUSTER ===" "Cyan"
     Write-Host ""
     
-    $containers = docker-compose -f docker/docker-compose.yml ps --services
-    $runningContainers = docker-compose -f docker/docker-compose.yml ps --services --filter "status=running"
+    # Esegui controlli in parallelo per velocità
+    $containerJob = Start-Job -ScriptBlock { 
+        $containers = docker-compose -f docker/docker-compose.yml ps --services
+        $running = docker-compose -f docker/docker-compose.yml ps --services --filter "status=running"
+        return @{Total = $containers.Count; Running = $running.Count}
+    }
     
-    if ($containers.Count -eq $runningContainers.Count) {
+    $dashboardJob = Start-Job -ScriptBlock {
+        try {
+            $response = Invoke-WebRequest -Uri "http://localhost:8080" -TimeoutSec 3 -UseBasicParsing
+            return $response.StatusCode -eq 200
+        } catch { return $false }
+    }
+    
+    $healthJobs = @()
+    $healthPorts = @("8100", "8101", "8102")
+    foreach ($port in $healthPorts) {
+        $healthJobs += Start-Job -ScriptBlock {
+            param($p)
+            try {
+                $response = Invoke-WebRequest -Uri "http://localhost:$p/health" -TimeoutSec 2 -UseBasicParsing
+                return @{Port = $p; Status = ($response.StatusCode -eq 200)}
+            } catch {
+                return @{Port = $p; Status = $false}
+            }
+        } -ArgumentList $port
+    }
+    
+    # Raccogli risultati
+    $containerResult = Wait-Job $containerJob -Timeout 5 | Receive-Job
+    $dashboardResult = Wait-Job $dashboardJob -Timeout 5 | Receive-Job
+    
+    Remove-Job $containerJob, $dashboardJob -Force
+    
+    # Mostra risultati container
+    if ($containerResult -and $containerResult.Total -eq $containerResult.Running) {
         Write-ColorOutput "Tutti i container sono in esecuzione" "Green"
     } else {
         Write-ColorOutput "Alcuni container non sono in esecuzione" "Red"
         docker-compose -f docker/docker-compose.yml ps
     }
     
+    # Mostra risultato dashboard
     Write-Host "Verificando connettività di rete..."
-    try {
-        $response = Invoke-WebRequest -Uri "http://localhost:8080" -TimeoutSec 5 -UseBasicParsing
-        if ($response.StatusCode -eq 200) {
-            Write-ColorOutput "Dashboard accessibile su http://localhost:8080" "Green"
-        }
-    }
-    catch {
+    if ($dashboardResult) {
+        Write-ColorOutput "Dashboard accessibile su http://localhost:8080" "Green"
+    } else {
         Write-ColorOutput "Dashboard non ancora accessibile" "Yellow"
     }
     
-    $ports = @("8000", "8001", "8002")
-    $leaderCount = 0
-    
-    foreach ($port in $ports) {
-        try {
-            $response = Invoke-WebRequest -Uri "http://localhost:$port/health" -TimeoutSec 3 -UseBasicParsing
-            if ($response.StatusCode -eq 200) {
-                $leaderCount++
-            }
-        }
-        catch {
-            Write-Host "Master su porta $port non risponde"
+    # Raccogli risultati health check
+    $activeHealthChecks = 0
+    foreach ($job in $healthJobs) {
+        $result = Wait-Job $job -Timeout 3 | Receive-Job
+        Remove-Job $job -Force
+        
+        if ($result -and $result.Status) {
+            $activeHealthChecks++
+            Write-Host "Master health check su porta $($result.Port): OK" -ForegroundColor Green
+        } else {
+            Write-Host "Master health check su porta $($result.Port) non risponde" -ForegroundColor Yellow
         }
     }
     
-    if ($leaderCount -gt 0) {
-        Write-ColorOutput "Raft cluster operativo ($leaderCount master attivi)" "Green"
+    if ($activeHealthChecks -gt 0) {
+        Write-ColorOutput "Raft cluster operativo ($activeHealthChecks master con health check attivi)" "Green"
     } else {
-        Write-ColorOutput "Raft cluster non operativo" "Red"
+        Write-ColorOutput "Raft cluster non operativo - nessun health check risponde" "Red"
     }
 }
 
@@ -450,6 +548,42 @@ switch ($Action.ToLower()) {
             
             Write-Host ""
             Write-ColorOutput "=== CLUSTER MAPREDUCE PRONTO! ===" "Green"
+            Write-Host ""
+            Write-Host "Servizi disponibili:"
+            Write-Host "  - Dashboard: http://localhost:8080"
+            Write-Host "  - Metrics: http://localhost:9090"
+            Write-Host "  - Master0 RPC: localhost:8000"
+            Write-Host "  - Master1 RPC: localhost:8001"
+            Write-Host "  - Master2 RPC: localhost:8002"
+            Write-Host ""
+        } else {
+            Write-ColorOutput "Errore durante l'avvio del cluster" "Red"
+            exit 1
+        }
+    }
+    "start-fast" {
+        if (Start-ClusterFast) {
+            Write-Host ""
+            Show-Status
+            Write-Host ""
+            Write-ColorOutput "=== CLUSTER MAPREDUCE PRONTO! (VELOCE) ===" "Green"
+            Write-Host ""
+            Write-Host "Servizi disponibili:"
+            Write-Host "  - Dashboard: http://localhost:8080"
+            Write-Host "  - Metrics: http://localhost:9090"
+            Write-Host "  - Master0 RPC: localhost:8000"
+            Write-Host "  - Master1 RPC: localhost:8001"
+            Write-Host "  - Master2 RPC: localhost:8002"
+            Write-Host ""
+        } else {
+            Write-ColorOutput "Errore durante l'avvio del cluster" "Red"
+            exit 1
+        }
+    }
+    "start-quick" {
+        if (Start-ClusterQuick) {
+            Write-Host ""
+            Write-ColorOutput "=== CLUSTER MAPREDUCE PRONTO! (SUPER VELOCE) ===" "Green"
             Write-Host ""
             Write-Host "Servizi disponibili:"
             Write-Host "  - Dashboard: http://localhost:8080"

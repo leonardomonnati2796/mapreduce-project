@@ -1,0 +1,5 @@
+Apache Hadoop è una piattaforma software open-source per l'elaborazione distribuita.
+Il sistema HDFS (Hadoop Distributed File System) gestisce l'archiviazione dei dati.
+YARN (Yet Another Resource Negotiator) coordina le risorse del cluster.
+MapReduce su Hadoop permette di processare petabyte di dati su migliaia di nodi.
+L'ecosistema Hadoop include strumenti come Hive, Pig, HBase e Spark per diverse esigenze analitiche.

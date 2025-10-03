@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  mapreduce-test:
+    build:
+      context: ..
+      dockerfile: test/docker/test-runner.Dockerfile
+    container_name: mapreduce-test-runner
+    environment:
+      - TEST_ENVIRONMENT=docker
+      - BASE_URL=http://mapreduce-dashboard:8080
+      - API_URL=http://mapreduce-dashboard:8080/api/v1
+      - TIMEOUT=60
+    volumes:
+      - ../test/reports:/app/test/reports
+      - ../test/logs:/app/test/logs
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+  mapreduce-dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-dashboard
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=test
+      - LOG_LEVEL=debug
+    volumes:
+      - ../data:/app/data
+      - ../web:/app/web
+    networks:
+      - mapreduce-network
+
+  mapreduce-master-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-master-1
+    environment:
+      - ROLE=master
+      - MASTER_ID=master-1
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+  mapreduce-master-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-master-2
+    environment:
+      - ROLE=master
+      - MASTER_ID=master-2
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+  mapreduce-master-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-master-3
+    environment:
+      - ROLE=master
+      - MASTER_ID=master-3
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+  mapreduce-worker-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-worker-1
+    environment:
+      - ROLE=worker
+      - WORKER_ID=worker-1
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+  mapreduce-worker-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-worker-2
+    environment:
+      - ROLE=worker
+      - WORKER_ID=worker-2
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+  mapreduce-worker-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-worker-3
+    environment:
+      - ROLE=worker
+      - WORKER_ID=worker-3
+      - DASHBOARD_URL=http://mapreduce-dashboard:8080
+    depends_on:
+      - mapreduce-dashboard
+    networks:
+      - mapreduce-network
+
+networks:
+  mapreduce-network:
+    driver: bridge
+
+volumes:
+  test-reports:
+  test-logs:

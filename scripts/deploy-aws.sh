@@ -1,16 +1,25 @@
 #!/bin/bash
 
-# Script di deployment per MapReduce su AWS
+# AWS Deployment Script for MapReduce Project
+# This script deploys the MapReduce application to AWS EC2 with S3 and Load Balancer
+
 set -e
 
-# Colori per output
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Funzioni di logging
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+TERRAFORM_DIR="$PROJECT_ROOT/aws/terraform"
+AWS_REGION="${AWS_REGION:-us-east-1}"
+ENVIRONMENT="${ENVIRONMENT:-prod}"
+
+# Functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -27,251 +36,318 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Configurazione
-PROJECT_NAME="mapreduce"
-AWS_REGION="${AWS_REGION:-us-east-1}"
-TERRAFORM_DIR="aws/terraform"
-DOCKER_DIR="docker"
-
-# Verifica prerequisiti
 check_prerequisites() {
-    log_info "Verificando prerequisiti..."
+    log_info "Checking prerequisites..."
     
-    # Verifica AWS CLI
+    # Check if AWS CLI is installed
     if ! command -v aws &> /dev/null; then
-        log_error "AWS CLI non trovato. Installalo prima di continuare."
+        log_error "AWS CLI is not installed. Please install it first."
         exit 1
     fi
     
-    # Verifica Terraform
+    # Check if Terraform is installed
     if ! command -v terraform &> /dev/null; then
-        log_error "Terraform non trovato. Installalo prima di continuare."
+        log_error "Terraform is not installed. Please install it first."
         exit 1
     fi
     
-    # Verifica Docker
+    # Check if Docker is installed
     if ! command -v docker &> /dev/null; then
-        log_error "Docker non trovato. Installalo prima di continuare."
+        log_error "Docker is not installed. Please install it first."
         exit 1
     fi
     
-    # Verifica Docker Compose
-    if ! command -v docker-compose &> /dev/null; then
-        log_error "Docker Compose non trovato. Installalo prima di continuare."
-        exit 1
-    fi
-    
-    # Verifica credenziali AWS
+    # Check AWS credentials
     if ! aws sts get-caller-identity &> /dev/null; then
-        log_error "Credenziali AWS non configurate. Configura AWS CLI prima di continuare."
+        log_error "AWS credentials not configured. Please run 'aws configure' first."
         exit 1
     fi
     
-    log_success "Tutti i prerequisiti sono soddisfatti"
+    log_success "All prerequisites are met"
 }
 
-# Inizializza Terraform
-init_terraform() {
-    log_info "Inizializzando Terraform..."
-    cd $TERRAFORM_DIR
+setup_terraform() {
+    log_info "Setting up Terraform..."
     
+    cd "$TERRAFORM_DIR"
+    
+    # Initialize Terraform
     terraform init
-    terraform validate
     
-    log_success "Terraform inizializzato correttamente"
-    cd - > /dev/null
+    # Create terraform.tfvars if it doesn't exist
+    if [ ! -f "terraform.tfvars" ]; then
+        log_warning "terraform.tfvars not found. Creating from example..."
+        cp terraform.tfvars.example terraform.tfvars
+        log_warning "Please edit terraform.tfvars with your configuration before proceeding."
+        exit 1
+    fi
+    
+    log_success "Terraform setup completed"
 }
 
-# Pianifica deployment
-plan_deployment() {
-    log_info "Pianificando deployment..."
-    cd $TERRAFORM_DIR
+validate_terraform() {
+    log_info "Validating Terraform configuration..."
+    
+    cd "$TERRAFORM_DIR"
+    
+    if terraform validate; then
+        log_success "Terraform configuration is valid"
+    else
+        log_error "Terraform configuration validation failed"
+        exit 1
+    fi
+}
+
+plan_terraform() {
+    log_info "Planning Terraform deployment..."
+    
+    cd "$TERRAFORM_DIR"
     
     terraform plan -out=tfplan
     
-    log_success "Piano di deployment creato"
-    cd - > /dev/null
+    log_success "Terraform plan completed"
 }
 
-# Esegue deployment
-deploy_infrastructure() {
-    log_info "Deploying infrastruttura AWS..."
-    cd $TERRAFORM_DIR
+apply_terraform() {
+    log_info "Applying Terraform configuration..."
     
-    terraform apply tfplan
+    cd "$TERRAFORM_DIR"
     
-    log_success "Infrastruttura deployata correttamente"
-    cd - > /dev/null
+    if terraform apply -auto-approve tfplan; then
+        log_success "Terraform apply completed successfully"
+    else
+        log_error "Terraform apply failed"
+        exit 1
+    fi
 }
 
-# Ottiene output di Terraform
-get_terraform_outputs() {
-    log_info "Ottenendo output di Terraform..."
-    cd $TERRAFORM_DIR
+get_outputs() {
+    log_info "Getting Terraform outputs..."
     
-    ALB_DNS=$(terraform output -raw load_balancer_dns)
+    cd "$TERRAFORM_DIR"
+    
+    # Get outputs
+    LOAD_BALANCER_DNS=$(terraform output -raw load_balancer_dns_name)
     S3_BUCKET=$(terraform output -raw s3_bucket_name)
     VPC_ID=$(terraform output -raw vpc_id)
     
-    log_success "Output ottenuti:"
-    log_info "Load Balancer DNS: $ALB_DNS"
-    log_info "S3 Bucket: $S3_BUCKET"
-    log_info "VPC ID: $VPC_ID"
-    
-    cd - > /dev/null
+    log_success "Infrastructure deployed successfully!"
+    echo ""
+    echo "=== DEPLOYMENT INFORMATION ==="
+    echo "Load Balancer DNS: $LOAD_BALANCER_DNS"
+    echo "S3 Bucket: $S3_BUCKET"
+    echo "VPC ID: $VPC_ID"
+    echo ""
+    echo "=== APPLICATION URLS ==="
+    echo "Application URL: http://$LOAD_BALANCER_DNS"
+    echo "Health Check URL: http://$LOAD_BALANCER_DNS/health"
+    echo "Dashboard URL: http://$LOAD_BALANCER_DNS/dashboard"
+    echo ""
+    echo "=== MONITORING ==="
+    echo "CloudWatch Logs: /aws/ec2/mapreduce"
+    echo "S3 Data Bucket: $S3_BUCKET"
+    echo ""
 }
 
-# Builda le immagini Docker
-build_docker_images() {
-    log_info "Building immagini Docker..."
+wait_for_health() {
+    log_info "Waiting for application to be healthy..."
     
-    # Build dell'immagine principale
-    docker build -f $DOCKER_DIR/Dockerfile.aws -t $PROJECT_NAME:latest .
+    cd "$TERRAFORM_DIR"
+    LOAD_BALANCER_DNS=$(terraform output -raw load_balancer_dns_name)
     
-    log_success "Immagini Docker buildate correttamente"
+    local max_attempts=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        log_info "Health check attempt $attempt/$max_attempts..."
+        
+        if curl -f -s "http://$LOAD_BALANCER_DNS/health" > /dev/null; then
+            log_success "Application is healthy!"
+            return 0
+        fi
+        
+        sleep 10
+        ((attempt++))
+    done
+    
+    log_error "Application failed to become healthy within expected time"
+    return 1
 }
 
-# Crea file di configurazione per deployment
-create_deployment_config() {
-    log_info "Creando configurazione di deployment..."
+run_tests() {
+    log_info "Running deployment tests..."
     
-    cat > .env.aws << EOF
-# AWS Configuration
-AWS_REGION=$AWS_REGION
-AWS_S3_BUCKET=$S3_BUCKET
-
-# Load Balancer
-ALB_DNS=$ALB_DNS
-
-# MapReduce Configuration
-RAFT_ADDRESSES=master0:1234,master1:1234,master2:1234
-RPC_ADDRESSES=master0:8000,master1:8001,master2:8002
-TMP_PATH=/tmp/mapreduce
-
-# Performance Settings
-METRICS_ENABLED=true
-METRICS_PORT=9090
-MAPREDUCE_MASTER_TASK_TIMEOUT=300s
-MAPREDUCE_MASTER_HEARTBEAT_INTERVAL=10s
-MAPREDUCE_WORKER_RETRY_INTERVAL=5s
-
-# Health Check Settings
-HEALTH_CHECK_ENABLED=true
-HEALTH_CHECK_INTERVAL=30s
-HEALTH_CHECK_TIMEOUT=10s
-
-# S3 Sync Settings
-S3_SYNC_ENABLED=true
-S3_SYNC_INTERVAL=60s
-S3_BACKUP_ENABLED=true
-EOF
+    cd "$TERRAFORM_DIR"
+    LOAD_BALANCER_DNS=$(terraform output -raw load_balancer_dns_name)
     
-    log_success "Configurazione creata in .env.aws"
-}
-
-# Testa il deployment
-test_deployment() {
-    log_info "Testando deployment..."
-    
-    # Attendi che i servizi siano pronti
-    log_info "Attendendo che i servizi siano pronti..."
-    sleep 60
-    
-    # Test health check
-    if curl -f "http://$ALB_DNS/health" &> /dev/null; then
-        log_success "Health check superato"
+    # Test health endpoint
+    if curl -f -s "http://$LOAD_BALANCER_DNS/health" > /dev/null; then
+        log_success "Health endpoint test passed"
     else
-        log_warning "Health check fallito - i servizi potrebbero non essere ancora pronti"
+        log_error "Health endpoint test failed"
+        return 1
     fi
     
-    # Test dashboard
-    if curl -f "http://$ALB_DNS" &> /dev/null; then
-        log_success "Dashboard accessibile"
+    # Test dashboard endpoint
+    if curl -f -s "http://$LOAD_BALANCER_DNS/dashboard" > /dev/null; then
+        log_success "Dashboard endpoint test passed"
     else
-        log_warning "Dashboard non accessibile - verifica la configurazione"
+        log_error "Dashboard endpoint test failed"
+        return 1
     fi
+    
+    log_success "All tests passed!"
 }
 
-# Mostra informazioni finali
-show_deployment_info() {
-    log_success "Deployment completato!"
-    echo
-    log_info "Informazioni di accesso:"
-    echo "  Dashboard: http://$ALB_DNS"
-    echo "  Health Check: http://$ALB_DNS/health"
-    echo "  S3 Bucket: $S3_BUCKET"
-    echo
-    log_info "Comandi utili:"
-    echo "  Verifica stato: aws ec2 describe-instances --filters 'Name=tag:Name,Values=*mapreduce*'"
-    echo "  Logs: aws logs describe-log-groups --log-group-name-prefix '/aws/ec2/mapreduce'"
-    echo "  S3: aws s3 ls s3://$S3_BUCKET"
-    echo
-    log_info "Per distruggere l'infrastruttura:"
-    echo "  cd $TERRAFORM_DIR && terraform destroy"
+cleanup() {
+    log_info "Cleaning up temporary files..."
+    
+    cd "$TERRAFORM_DIR"
+    rm -f tfplan
+    
+    log_success "Cleanup completed"
 }
 
-# Funzione principale
+show_help() {
+    echo "AWS Deployment Script for MapReduce Project"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -h, --help              Show this help message"
+    echo "  -p, --plan-only         Only run terraform plan (don't apply)"
+    echo "  -f, --force             Skip confirmation prompts"
+    echo "  -r, --region REGION     AWS region (default: us-east-1)"
+    echo "  -e, --env ENVIRONMENT   Environment (default: prod)"
+    echo "  -t, --test              Run tests after deployment"
+    echo "  -c, --cleanup           Clean up resources"
+    echo ""
+    echo "Examples:"
+    echo "  $0                      # Deploy with default settings"
+    echo "  $0 --plan-only          # Only plan the deployment"
+    echo "  $0 --region us-west-2   # Deploy to us-west-2 region"
+    echo "  $0 --test               # Deploy and run tests"
+    echo "  $0 --cleanup            # Clean up all resources"
+}
+
+# Parse command line arguments
+PLAN_ONLY=false
+FORCE=false
+RUN_TESTS=false
+CLEANUP=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -p|--plan-only)
+            PLAN_ONLY=true
+            shift
+            ;;
+        -f|--force)
+            FORCE=true
+            shift
+            ;;
+        -r|--region)
+            AWS_REGION="$2"
+            shift 2
+            ;;
+        -e|--env)
+            ENVIRONMENT="$2"
+            shift 2
+            ;;
+        -t|--test)
+            RUN_TESTS=true
+            shift
+            ;;
+        -c|--cleanup)
+            CLEANUP=true
+            shift
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# Main execution
 main() {
-    log_info "Iniziando deployment di MapReduce su AWS..."
+    log_info "Starting AWS deployment for MapReduce project..."
+    log_info "Region: $AWS_REGION"
+    log_info "Environment: $ENVIRONMENT"
     
-    check_prerequisites
-    init_terraform
-    plan_deployment
-    
-    # Chiedi conferma
-    echo
-    log_warning "Stai per deployare l'infrastruttura AWS. Questo potrebbe comportare costi."
-    read -p "Vuoi continuare? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log_info "Deployment annullato"
+    if [ "$CLEANUP" = true ]; then
+        log_info "Cleaning up AWS resources..."
+        cd "$TERRAFORM_DIR"
+        terraform destroy -auto-approve
+        log_success "Cleanup completed"
         exit 0
     fi
     
-    deploy_infrastructure
-    get_terraform_outputs
-    build_docker_images
-    create_deployment_config
-    test_deployment
-    show_deployment_info
+    # Check prerequisites
+    check_prerequisites
+    
+    # Setup Terraform
+    setup_terraform
+    
+    # Validate configuration
+    validate_terraform
+    
+    # Plan deployment
+    plan_terraform
+    
+    if [ "$PLAN_ONLY" = true ]; then
+        log_success "Plan completed. Use --force to apply changes."
+        exit 0
+    fi
+    
+    # Confirm deployment
+    if [ "$FORCE" = false ]; then
+        echo ""
+        log_warning "This will create AWS resources that may incur costs."
+        read -p "Do you want to continue? (y/N): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Deployment cancelled"
+            exit 0
+        fi
+    fi
+    
+    # Apply Terraform
+    apply_terraform
+    
+    # Get outputs
+    get_outputs
+    
+    # Wait for health
+    if wait_for_health; then
+        log_success "Application is healthy and ready!"
+    else
+        log_error "Application failed to become healthy"
+        exit 1
+    fi
+    
+    # Run tests if requested
+    if [ "$RUN_TESTS" = true ]; then
+        run_tests
+    fi
+    
+    # Cleanup
+    cleanup
+    
+    log_success "AWS deployment completed successfully!"
+    echo ""
+    echo "=== NEXT STEPS ==="
+    echo "1. Monitor your application in the AWS Console"
+    echo "2. Check CloudWatch logs for any issues"
+    echo "3. Configure monitoring and alerting as needed"
+    echo "4. Set up backup strategies for your S3 data"
+    echo ""
 }
 
-# Gestione degli argomenti
-case "${1:-}" in
-    "plan")
-        check_prerequisites
-        init_terraform
-        plan_deployment
-        ;;
-    "deploy")
-        main
-        ;;
-    "destroy")
-        log_warning "Stai per distruggere l'infrastruttura AWS."
-        read -p "Sei sicuro? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            cd $TERRAFORM_DIR
-            terraform destroy
-            cd - > /dev/null
-            log_success "Infrastruttura distrutta"
-        else
-            log_info "Operazione annullata"
-        fi
-        ;;
-    "status")
-        cd $TERRAFORM_DIR
-        terraform output
-        cd - > /dev/null
-        ;;
-    *)
-        echo "Usage: $0 {plan|deploy|destroy|status}"
-        echo
-        echo "Commands:"
-        echo "  plan    - Pianifica il deployment senza eseguirlo"
-        echo "  deploy  - Esegue il deployment completo"
-        echo "  destroy - Distrugge l'infrastruttura"
-        echo "  status  - Mostra lo stato dell'infrastruttura"
-        exit 1
-        ;;
-esac
+# Run main function
+main "$@"

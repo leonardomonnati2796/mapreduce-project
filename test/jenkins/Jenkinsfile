@@ -1,0 +1,168 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['local', 'docker', 'aws'],
+            description: 'Test environment'
+        )
+        choice(
+            name: 'CATEGORIES',
+            choices: ['core', 'raft', 'integration', 'dashboard', 'websocket', 'cluster', 'all'],
+            description: 'Test categories to run'
+        )
+        booleanParam(
+            name: 'PARALLEL',
+            defaultValue: true,
+            description: 'Run tests in parallel'
+        )
+        booleanParam(
+            name: 'VERBOSE',
+            defaultValue: false,
+            description: 'Verbose output'
+        )
+        booleanParam(
+            name: 'GENERATE_REPORT',
+            defaultValue: true,
+            description: 'Generate test reports'
+        )
+    }
+    
+    environment {
+        BASE_URL = "${env.ENVIRONMENT == 'local' ? 'http://localhost:8080' : env.ENVIRONMENT == 'docker' ? 'http://mapreduce-dashboard:8080' : 'http://ec2-instance:8080'}"
+        API_URL = "${BASE_URL}/api/v1"
+        TIMEOUT = "${env.ENVIRONMENT == 'aws' ? '60' : '30'}"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Setup') {
+            steps {
+                script {
+                    if (env.ENVIRONMENT == 'docker') {
+                        sh 'docker --version'
+                        sh 'docker-compose --version'
+                    }
+                }
+            }
+        }
+        
+        stage('Start System') {
+            steps {
+                script {
+                    if (env.ENVIRONMENT == 'docker') {
+                        sh 'cd test/docker && docker-compose up -d'
+                        sleep(time: 30, unit: 'SECONDS')
+                    } else if (env.ENVIRONMENT == 'local') {
+                        sh 'cd src && go run main.go &'
+                        sleep(time: 10, unit: 'SECONDS')
+                    }
+                }
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                script {
+                    def categories = env.CATEGORIES == 'all' ? 
+                        ['core', 'raft', 'integration', 'dashboard', 'websocket', 'cluster'] : 
+                        [env.CATEGORIES]
+                    
+                    def categoryString = categories.join(',')
+                    
+                    powershell """
+                        cd test
+                        .\\run-tests-optimized.ps1 -Environment "${env.ENVIRONMENT}" -Categories @("${categoryString}") -Parallel:${env.PARALLEL} -Verbose:${env.VERBOSE} -GenerateReport:${env.GENERATE_REPORT}
+                    """
+                }
+            }
+        }
+        
+        stage('Performance Tests') {
+            when {
+                anyOf {
+                    params.CATEGORIES == 'all'
+                    params.CATEGORIES == 'dashboard'
+                    params.CATEGORIES == 'websocket'
+                    params.CATEGORIES == 'cluster'
+                }
+            }
+            steps {
+                powershell """
+                    cd test
+                    .\\run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport
+                """
+            }
+        }
+        
+        stage('Security Tests') {
+            when {
+                anyOf {
+                    params.CATEGORIES == 'all'
+                    params.CATEGORIES == 'dashboard'
+                }
+            }
+            steps {
+                powershell """
+                    cd test
+                    .\\test-suites\\test-dashboard-optimized.ps1 -Verbose
+                """
+            }
+        }
+        
+        stage('Coverage Tests') {
+            when {
+                anyOf {
+                    params.CATEGORIES == 'all'
+                    params.CATEGORIES == 'core'
+                    params.CATEGORIES == 'raft'
+                    params.CATEGORIES == 'integration'
+                }
+            }
+            steps {
+                powershell """
+                    cd test
+                    .\\run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport
+                """
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                if (env.ENVIRONMENT == 'docker') {
+                    sh 'cd test/docker && docker-compose down'
+                } else if (env.ENVIRONMENT == 'local') {
+                    sh 'pkill -f "go run main.go" || true'
+                }
+            }
+        }
+        
+        success {
+            archiveArtifacts artifacts: 'test/reports/*.json', fingerprint: true
+            publishHTML([
+                allowMissing: false,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'test/reports',
+                reportFiles: 'test-report-*.html',
+                reportName: 'Test Report'
+            ])
+        }
+        
+        failure {
+            archiveArtifacts artifacts: 'test/logs/*.log', fingerprint: true
+        }
+        
+        always {
+            cleanWs()
+        }
+    }
+}

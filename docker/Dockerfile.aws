@@ -1,72 +1,74 @@
-# --- Fase 1: Build ---
-FROM golang:1.19-alpine AS builder
+# Multi-stage Dockerfile for AWS MapReduce Deployment
+# Optimized for production use on AWS EC2
+
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+# Set working directory
 WORKDIR /app
 
-# Configura Go per AWS
-ENV GOPROXY=https://proxy.golang.org,direct
-ENV GOSUMDB=sum.golang.org
-ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
 
-# Installa dipendenze per AWS SDK
-RUN apk add --no-cache git ca-certificates
+# Copy go mod files
+COPY go.mod go.sum ./
 
-# Copia tutto il progetto
-COPY . .
+# Download dependencies
+RUN go mod download
 
-# Compila l'applicazione principale
-RUN go build -o mapreduce ./src
+# Copy source code
+COPY src/ ./src/
+COPY web/ ./web/
 
-# Compila il servizio S3 sync
-RUN go build -o s3-sync ./cmd/s3-sync
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o mapreduce \
+    ./src/main.go
 
-# --- Fase 2: Release ---
+# Production stage
 FROM alpine:latest
-WORKDIR /root/
 
-# Installa dipendenze per AWS e monitoring
+# Install runtime dependencies
 RUN apk --no-cache add \
     ca-certificates \
-    docker-cli \
-    bash \
+    tzdata \
     curl \
-    wget \
-    aws-cli \
     jq \
-    tzdata
+    aws-cli
 
-# Copia i binari compilati
+# Create non-root user
+RUN addgroup -g 1001 -S mapreduce && \
+    adduser -u 1001 -S mapreduce -G mapreduce
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
 COPY --from=builder /app/mapreduce .
-COPY --from=builder /app/s3-sync .
-COPY --from=builder /app/data ./data
+
+# Copy web assets
 COPY --from=builder /app/web ./web
-COPY --from=builder /app/scripts ./scripts
 
-# Crea directory per dati temporanei
-RUN mkdir -p /tmp/mapreduce /var/log/mapreduce
+# Create data directory
+RUN mkdir -p /app/data && \
+    chown -R mapreduce:mapreduce /app
 
-# Configura timezone
-ENV TZ=UTC
+# Set environment variables
+ENV PORT=8080
+ENV GIN_MODE=release
+ENV AWS_REGION=us-east-1
 
-# Configura AWS CLI
-RUN mkdir -p ~/.aws
-
-# Health check script
-COPY docker/healthcheck.sh /usr/local/bin/healthcheck.sh
-RUN chmod +x /usr/local/bin/healthcheck.sh
-
-# Script di avvio
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-# Espone le porte
-EXPOSE 8000 8001 8002 8080 9090 1234 1235 1236
+# Expose port
+EXPOSE 8080
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD /usr/local/bin/healthcheck.sh
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
-# Entrypoint
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# Switch to non-root user
+USER mapreduce
+
+# Start the application
 CMD ["./mapreduce"]

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,12 +12,12 @@ import (
 
 // HealthStatus rappresenta lo stato di salute del sistema
 type HealthStatus struct {
-	Status      string                 `json:"status"`
-	Timestamp   time.Time              `json:"timestamp"`
-	Version     string                 `json:"version"`
-	Uptime      time.Duration          `json:"uptime"`
-	Components  map[string]ComponentStatus `json:"components"`
-	System      SystemInfo             `json:"system"`
+	Status     string                     `json:"status"`
+	Timestamp  time.Time                  `json:"timestamp"`
+	Version    string                     `json:"version"`
+	Uptime     time.Duration              `json:"uptime"`
+	Components map[string]ComponentStatus `json:"components"`
+	System     SystemInfo                 `json:"system"`
 }
 
 // ComponentStatus rappresenta lo stato di un componente
@@ -29,11 +30,11 @@ type ComponentStatus struct {
 
 // SystemInfo contiene informazioni sul sistema
 type SystemInfo struct {
-	GoVersion    string `json:"go_version"`
-	OS           string `json:"os"`
-	Architecture string `json:"architecture"`
-	NumCPU       int    `json:"num_cpu"`
-	NumGoroutine int    `json:"num_goroutine"`
+	GoVersion    string     `json:"go_version"`
+	OS           string     `json:"os"`
+	Architecture string     `json:"architecture"`
+	NumCPU       int        `json:"num_cpu"`
+	NumGoroutine int        `json:"num_goroutine"`
 	Memory       MemoryInfo `json:"memory"`
 }
 
@@ -47,9 +48,9 @@ type MemoryInfo struct {
 
 // HealthChecker gestisce i controlli di salute del sistema
 type HealthChecker struct {
-	version     string
-	startTime   time.Time
-	components  map[string]ComponentStatus
+	version    string
+	startTime  time.Time
+	components map[string]ComponentStatus
 }
 
 // NewHealthChecker crea un nuovo health checker
@@ -64,26 +65,39 @@ func NewHealthChecker(version string) *HealthChecker {
 // CheckComponent verifica lo stato di un componente
 func (h *HealthChecker) CheckComponent(name string, checkFunc func() (bool, string, map[string]string)) {
 	status, message, details := checkFunc()
-	
+
 	componentStatus := ComponentStatus{
 		Status:    "healthy",
 		LastCheck: time.Now(),
 		Details:   details,
 	}
-	
+
 	if !status {
 		componentStatus.Status = "unhealthy"
 		componentStatus.Message = message
 	}
-	
+
 	h.components[name] = componentStatus
+}
+
+// CheckAll esegue tutti i controlli di salute e restituisce lo stato completo
+func (h *HealthChecker) CheckAll(ctx context.Context) HealthStatus {
+	// Esegui tutti i controlli
+	h.CheckComponent("disk_space", CheckDiskSpace)
+	h.CheckComponent("s3_connection", CheckS3Connection)
+	h.CheckComponent("raft_cluster", CheckRaftCluster)
+	h.CheckComponent("docker", CheckDocker)
+	h.CheckComponent("network", CheckNetworkConnectivity)
+
+	// Restituisci lo stato completo
+	return h.GetHealthStatus()
 }
 
 // GetHealthStatus restituisce lo stato di salute completo
 func (h *HealthChecker) GetHealthStatus() HealthStatus {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	
+
 	overallStatus := "healthy"
 	for _, component := range h.components {
 		if component.Status == "unhealthy" {
@@ -91,7 +105,7 @@ func (h *HealthChecker) GetHealthStatus() HealthStatus {
 			break
 		}
 	}
-	
+
 	return HealthStatus{
 		Status:     overallStatus,
 		Timestamp:  time.Now(),
@@ -118,15 +132,15 @@ func (h *HealthChecker) GetHealthStatus() HealthStatus {
 func HealthCheckHandler(healthChecker *HealthChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status := healthChecker.GetHealthStatus()
-		
+
 		w.Header().Set("Content-Type", "application/json")
-		
+
 		if status.Status == "healthy" {
 			w.WriteHeader(http.StatusOK)
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
-		
+
 		json.NewEncoder(w).Encode(status)
 	}
 }
@@ -140,11 +154,11 @@ func CheckDiskSpace() (bool, string, map[string]string) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		os.MkdirAll(path, 0755)
 	}
-	
+
 	// Per semplicità, assumiamo che ci sia spazio sufficiente
 	// In un'implementazione reale, useresti syscall.Statfs
 	return true, "", map[string]string{
-		"path": path,
+		"path":      path,
 		"available": "sufficient",
 	}
 }
@@ -156,18 +170,18 @@ func CheckS3Connection() (bool, string, map[string]string) {
 			"enabled": "false",
 		}
 	}
-	
+
 	// Verifica configurazione S3
 	bucket := os.Getenv("AWS_S3_BUCKET")
 	region := os.Getenv("AWS_REGION")
-	
+
 	if bucket == "" {
 		return false, "Bucket S3 non configurato", map[string]string{
 			"bucket": "not_set",
 			"region": region,
 		}
 	}
-	
+
 	// In un'implementazione reale, faresti una chiamata di test a S3
 	return true, "", map[string]string{
 		"bucket": bucket,
@@ -180,14 +194,14 @@ func CheckRaftCluster() (bool, string, map[string]string) {
 	// Verifica che le variabili d'ambiente Raft siano configurate
 	raftAddrs := os.Getenv("RAFT_ADDRESSES")
 	rpcAddrs := os.Getenv("RPC_ADDRESSES")
-	
+
 	if raftAddrs == "" || rpcAddrs == "" {
 		return false, "Configurazione Raft mancante", map[string]string{
 			"raft_addresses": raftAddrs,
 			"rpc_addresses":  rpcAddrs,
 		}
 	}
-	
+
 	return true, "", map[string]string{
 		"raft_addresses": raftAddrs,
 		"rpc_addresses":  rpcAddrs,
@@ -215,16 +229,16 @@ func CheckNetworkConnectivity() (bool, string, map[string]string) {
 // StartHealthCheckServer avvia il server di health check
 func StartHealthCheckServer(port int, healthChecker *HealthChecker) error {
 	mux := http.NewServeMux()
-	
+
 	// Health check endpoint
 	mux.HandleFunc("/health", HealthCheckHandler(healthChecker))
-	
+
 	// Liveness probe (semplice)
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	
+
 	// Readiness probe (controlla se il servizio è pronto)
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
 		status := healthChecker.GetHealthStatus()
@@ -236,19 +250,19 @@ func StartHealthCheckServer(port int, healthChecker *HealthChecker) error {
 			w.Write([]byte("NOT READY"))
 		}
 	})
-	
+
 	// Metrics endpoint (informazioni dettagliate)
 	mux.HandleFunc("/health/metrics", func(w http.ResponseWriter, r *http.Request) {
 		status := healthChecker.GetHealthStatus()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(status)
 	})
-	
+
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: mux,
 	}
-	
+
 	fmt.Printf("Health check server avviato sulla porta %d\n", port)
 	return server.ListenAndServe()
 }
@@ -258,7 +272,7 @@ func RunHealthChecks(healthChecker *HealthChecker) {
 	// Esegui controlli periodici
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		healthChecker.CheckComponent("disk_space", CheckDiskSpace)
 		healthChecker.CheckComponent("s3_connection", CheckS3Connection)

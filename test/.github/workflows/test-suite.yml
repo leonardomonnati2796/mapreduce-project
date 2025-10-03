@@ -1,0 +1,145 @@
+name: MapReduce Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+
+jobs:
+  test:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        environment: [local, docker, aws]
+        categories: [core, raft, integration, dashboard, websocket, cluster]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Setup Docker
+      if: matrix.environment == 'docker'
+      run: |
+        docker --version
+        docker-compose --version
+    
+    - name: Start MapReduce System
+      run: |
+        # Start the MapReduce system based on environment
+        if ("${{ matrix.environment }}" -eq "docker") {
+          docker-compose up -d
+          Start-Sleep -Seconds 30
+        } elseif ("${{ matrix.environment }}" -eq "local") {
+          go run src/main.go &
+          Start-Sleep -Seconds 10
+        }
+    
+    - name: Run Tests
+      run: |
+        cd test
+        .\run-tests-optimized.ps1 -Environment "${{ matrix.environment }}" -Categories @("${{ matrix.categories }}") -GenerateReport -Verbose
+    
+    - name: Upload Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-reports-${{ matrix.environment }}-${{ matrix.categories }}
+        path: test/reports/
+    
+    - name: Upload Test Logs
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: test-logs-${{ matrix.environment }}-${{ matrix.categories }}
+        path: test/logs/
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        if ("${{ matrix.environment }}" -eq "docker") {
+          docker-compose down
+        } elseif ("${{ matrix.environment }}" -eq "local") {
+          Get-Process | Where-Object { $_.ProcessName -like "*mapreduce*" } | Stop-Process -Force
+        }
+
+  performance:
+    runs-on: windows-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Run Performance Tests
+      run: |
+        cd test
+        .\run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport
+    
+    - name: Upload Performance Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-reports
+        path: test/reports/
+
+  security:
+    runs-on: windows-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Run Security Tests
+      run: |
+        cd test
+        .\test-suites\test-dashboard-optimized.ps1 -Verbose
+    
+    - name: Upload Security Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: test/reports/
+
+  coverage:
+    runs-on: windows-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Run Coverage Tests
+      run: |
+        cd test
+        .\run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport
+    
+    - name: Upload Coverage Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-reports
+        path: test/reports/

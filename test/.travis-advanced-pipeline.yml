@@ -1,0 +1,188 @@
+language: powershell
+
+os:
+  - windows
+
+powershell:
+  - 7.2
+
+env:
+  - TEST_ENVIRONMENT=local
+  - BASE_URL=http://localhost:8080
+  - API_URL=http://localhost:8080/api/v1
+  - TIMEOUT=30
+  - TEST_PARALLEL=true
+  - TEST_VERBOSE=false
+  - TEST_GENERATE_REPORT=true
+  - TEST_PERFORMANCE=true
+  - TEST_SECURITY=true
+  - TEST_COVERAGE=true
+
+matrix:
+  include:
+    - env: TEST_CATEGORIES=core
+    - env: TEST_CATEGORIES=raft
+    - env: TEST_CATEGORIES=integration
+    - env: TEST_CATEGORIES=dashboard
+    - env: TEST_CATEGORIES=websocket
+    - env: TEST_CATEGORIES=cluster
+
+before_install:
+  - choco install go -y
+  - go version
+
+install:
+  - cd src
+  - go mod download
+  - cd ..
+
+before_script:
+  - echo "Starting MapReduce system..."
+  - cd src
+  - Start-Process -FilePath "go" -ArgumentList "run", "main.go" -WindowStyle Hidden
+  - Start-Sleep -Seconds 10
+  - cd ..
+
+script:
+  - cd test
+  - pwsh -File run-tests-optimized.ps1 -Categories @("$env:TEST_CATEGORIES") -Environment $env:TEST_ENVIRONMENT -GenerateReport:$env:TEST_GENERATE_REPORT -Verbose:$env:TEST_VERBOSE
+
+after_script:
+  - echo "Stopping MapReduce system..."
+  - Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+after_success:
+  - echo "Tests completed successfully!"
+
+after_failure:
+  - echo "Tests failed!"
+  - Get-Content test/logs/*.log -ErrorAction SilentlyContinue
+
+artifacts:
+  paths:
+    - test/reports/
+    - test/logs/
+  expire_in: 1 week
+
+notifications:
+  email:
+    on_success: never
+    on_failure: always
+  slack:
+    on_success: never
+    on_failure: always
+    webhook: $SLACK_WEBHOOK_URL
+
+# Performance tests
+performance_tests:
+  language: powershell
+  os: windows
+  powershell: 7.2
+  env:
+    - TEST_ENVIRONMENT=local
+    - BASE_URL=http://localhost:8080
+    - API_URL=http://localhost:8080/api/v1
+    - TIMEOUT=30
+    - TEST_PERFORMANCE=true
+  before_install:
+    - choco install go -y
+    - go version
+  install:
+    - cd src
+    - go mod download
+    - cd ..
+  before_script:
+    - echo "Starting MapReduce system..."
+    - cd src
+    - Start-Process -FilePath "go" -ArgumentList "run", "main.go" -WindowStyle Hidden
+    - Start-Sleep -Seconds 10
+    - cd ..
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport -Verbose
+  after_script:
+    - echo "Stopping MapReduce system..."
+    - Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+  artifacts:
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+
+# Security tests
+security_tests:
+  language: powershell
+  os: windows
+  powershell: 7.2
+  env:
+    - TEST_ENVIRONMENT=local
+    - BASE_URL=http://localhost:8080
+    - API_URL=http://localhost:8080/api/v1
+    - TIMEOUT=30
+    - TEST_SECURITY=true
+  before_install:
+    - choco install go -y
+    - go version
+  install:
+    - cd src
+    - go mod download
+    - cd ..
+  before_script:
+    - echo "Starting MapReduce system..."
+    - cd src
+    - Start-Process -FilePath "go" -ArgumentList "run", "main.go" -WindowStyle Hidden
+    - Start-Sleep -Seconds 10
+    - cd ..
+  script:
+    - cd test
+    - pwsh -File test-suites/test-dashboard-optimized.ps1 -Verbose
+  after_script:
+    - echo "Stopping MapReduce system..."
+    - Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+  artifacts:
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+
+# Coverage tests
+coverage_tests:
+  language: powershell
+  os: windows
+  powershell: 7.2
+  env:
+    - TEST_ENVIRONMENT=local
+    - BASE_URL=http://localhost:8080
+    - API_URL=http://localhost:8080/api/v1
+    - TIMEOUT=30
+    - TEST_COVERAGE=true
+  before_install:
+    - choco install go -y
+    - go version
+  install:
+    - cd src
+    - go mod download
+    - cd ..
+  before_script:
+    - echo "Starting MapReduce system..."
+    - cd src
+    - Start-Process -FilePath "go" -ArgumentList "run", "main.go" -WindowStyle Hidden
+    - Start-Sleep -Seconds 10
+    - cd ..
+  script:
+    - cd test
+    - pwsh -File run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport -Verbose
+  after_script:
+    - echo "Stopping MapReduce system..."
+    - Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+  artifacts:
+    paths:
+      - test/reports/
+    expire_in: 1 week
+  only:
+    - main
+    - develop

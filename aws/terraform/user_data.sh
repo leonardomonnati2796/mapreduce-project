@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# User data script per EC2 instances
+# User Data Script for MapReduce EC2 Instances
+# This script is executed when an EC2 instance first launches
+
 set -e
 
-# Log everything
+# Logging
 exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
-echo "Starting MapReduce deployment on EC2..."
+echo "Starting MapReduce instance initialization..."
 
 # Update system
 yum update -y
@@ -27,93 +29,242 @@ unzip awscliv2.zip
 ./aws/install
 rm -rf aws awscliv2.zip
 
-# Install additional tools
-yum install -y git htop tree jq
+# Install CloudWatch agent
+yum install -y amazon-cloudwatch-agent
+
+REPO_URL="${REPO_URL}"
+REPO_BRANCH="${REPO_BRANCH}"
 
 # Create application directory
-mkdir -p /opt/mapreduce
-cd /opt/mapreduce
+mkdir -p /opt
+cd /opt
 
-# Clone the repository (you'll need to replace this with your actual repo)
-# git clone https://github.com/your-username/mapreduce-project.git .
+# Install Git
+yum install -y git
 
-# For now, we'll create a placeholder structure
-mkdir -p docker data scripts
+# Clone repository
+git clone -b "${REPO_BRANCH}" "${REPO_URL}" app || {
+  echo "Git clone failed; ensure repo_url/repo_branch are set";
+  exit 1;
+}
 
-# Create environment file
-cat > .env << EOF
-# AWS Configuration
-AWS_REGION=${aws_region}
-AWS_S3_BUCKET=${s3_bucket}
+cd /opt/app
 
-# MapReduce Configuration
-RAFT_ADDRESSES=master0:1234,master1:1234,master2:1234
-RPC_ADDRESSES=master0:8000,master1:8001,master2:8002
-TMP_PATH=/tmp/mapreduce
+# Build Docker images from repository
+docker build -f docker/Dockerfile.aws -t mapreduce-master:latest --build-arg BUILD_TARGET=master .
+docker build -f docker/Dockerfile.aws -t mapreduce-worker:latest --build-arg BUILD_TARGET=worker .
 
-# Performance Settings
-METRICS_ENABLED=true
-METRICS_PORT=9090
-MAPREDUCE_MASTER_TASK_TIMEOUT=300s
-MAPREDUCE_MASTER_HEARTBEAT_INTERVAL=10s
-MAPREDUCE_WORKER_RETRY_INTERVAL=5s
+# Use production docker-compose
+cd /opt/app/aws/docker
 
-# Health Check Settings
-HEALTH_CHECK_ENABLED=true
-HEALTH_CHECK_INTERVAL=30s
-HEALTH_CHECK_TIMEOUT=10s
+# Ensure CloudWatch config is available alongside compose
+cp -f ../../monitoring/cloudwatch-config.json ./cloudwatch-config.json || true
 
-# S3 Sync Settings
-S3_SYNC_ENABLED=true
-S3_SYNC_INTERVAL=60s
-S3_BACKUP_ENABLED=true
+/usr/local/bin/docker-compose -f docker-compose.production.yml up -d
+
+cat > nginx.conf << 'EOF'
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    server_tokens off;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/xml+rss
+        application/atom+xml
+        image/svg+xml;
+
+    upstream mapreduce_master {
+        server mapreduce-master:8082;
+        keepalive 32;
+    }
+
+    upstream mapreduce_worker {
+        server mapreduce-worker:8081;
+        keepalive 32;
+    }
+
+    upstream mapreduce_dashboard {
+        server mapreduce-master:3000;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        location /dashboard {
+            proxy_pass http://mapreduce_dashboard;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /dashboard/ws {
+            proxy_pass http://mapreduce_dashboard;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /api/master {
+            proxy_pass http://mapreduce_master;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /api/worker {
+            proxy_pass http://mapreduce_worker;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /api/health {
+            proxy_pass http://mapreduce_master/health;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
 EOF
 
-# Create sample data
-mkdir -p data
-cat > data/Words.txt << EOF
-hello world
-mapreduce distributed
-aws cloud computing
-docker containers
-terraform infrastructure
-kubernetes orchestration
-microservices architecture
-serverless computing
-big data analytics
-machine learning
+cat > cloudwatch-config.json << 'EOF'
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "metrics": {
+    "namespace": "MapReduce/EC2",
+    "metrics_collected": {
+      "cpu": {
+        "measurement": [
+          "cpu_usage_idle",
+          "cpu_usage_iowait",
+          "cpu_usage_user",
+          "cpu_usage_system"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ],
+        "totalcpu": false
+      },
+      "disk": {
+        "measurement": [
+          "used_percent"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "mem": {
+        "measurement": [
+          "mem_used_percent"
+        ],
+        "metrics_collection_interval": 60
+      }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/mapreduce/master.log",
+            "log_group_name": "/aws/ec2/mapreduce/master",
+            "log_stream_name": "{instance_id}-master",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/mapreduce/worker.log",
+            "log_group_name": "/aws/ec2/mapreduce/worker",
+            "log_stream_name": "{instance_id}-worker",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/nginx/access.log",
+            "log_group_name": "/aws/ec2/mapreduce/nginx-access",
+            "log_stream_name": "{instance_id}-nginx-access",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
 EOF
 
-# Create startup script
-cat > start-mapreduce.sh << 'EOF'
-#!/bin/bash
+# Create log directories
+mkdir -p /var/log/mapreduce
+mkdir -p /var/log/nginx
+mkdir -p /tmp/mapreduce
 
-# Start MapReduce cluster
-cd /opt/mapreduce
+# Set permissions
+chown -R ec2-user:ec2-user /opt/mapreduce
+chown -R ec2-user:ec2-user /var/log/mapreduce
+chown -R ec2-user:ec2-user /tmp/mapreduce
 
-# Pull latest images
-docker-compose -f docker/docker-compose.aws.yml pull
-
-# Start services
-docker-compose -f docker/docker-compose.aws.yml up -d
-
-# Wait for services to be ready
-echo "Waiting for services to start..."
-sleep 30
-
-# Check health
-docker-compose -f docker/docker-compose.aws.yml ps
-
-echo "MapReduce cluster started successfully!"
-echo "Dashboard available at: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080"
-EOF
-
-chmod +x start-mapreduce.sh
-
-# Create systemd service
-cat > /etc/systemd/system/mapreduce.service << EOF
+# Create systemd service for MapReduce
+cat > /etc/systemd/system/mapreduce.service << 'EOF'
 [Unit]
-Description=MapReduce Cluster
+Description=MapReduce Service
 After=docker.service
 Requires=docker.service
 
@@ -121,122 +272,25 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/mapreduce
-ExecStart=/opt/mapreduce/start-mapreduce.sh
-ExecStop=/usr/local/bin/docker-compose -f docker/docker-compose.aws.yml down
-TimeoutStartSec=0
+ExecStart=/usr/local/bin/docker-compose up -d
+ExecStop=/usr/local/bin/docker-compose down
+User=ec2-user
+Group=ec2-user
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Enable and start the service
+# Enable and start services
+systemctl daemon-reload
 systemctl enable mapreduce.service
-
-# Create monitoring script
-cat > /opt/mapreduce/monitor.sh << 'EOF'
-#!/bin/bash
-
-# Monitor MapReduce cluster health
-cd /opt/mapreduce
-
-while true; do
-    echo "=== MapReduce Cluster Status $(date) ==="
-    
-    # Check Docker containers
-    docker-compose -f docker/docker-compose.aws.yml ps
-    
-    # Check disk space
-    df -h /tmp/mapreduce
-    
-    # Check memory usage
-    free -h
-    
-    # Check if services are responding
-    curl -f http://localhost:8080/health || echo "Dashboard not responding"
-    curl -f http://localhost:9090/health || echo "Metrics not responding"
-    
-    echo "=========================================="
-    sleep 60
-done
-EOF
-
-chmod +x /opt/mapreduce/monitor.sh
-
-# Create log rotation configuration
-cat > /etc/logrotate.d/mapreduce << EOF
-/var/log/user-data.log {
-    daily
-    missingok
-    rotate 7
-    compress
-    delaycompress
-    notifempty
-    create 644 root root
-}
-
-/opt/mapreduce/logs/*.log {
-    daily
-    missingok
-    rotate 7
-    compress
-    delaycompress
-    notifempty
-    create 644 root root
-}
-EOF
-
-# Set up CloudWatch agent (optional)
-wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
-rpm -U ./amazon-cloudwatch-agent.rpm
-
-# Create CloudWatch config
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << EOF
-{
-    "logs": {
-        "logs_collected": {
-            "files": {
-                "collect_list": [
-                    {
-                        "file_path": "/var/log/user-data.log",
-                        "log_group_name": "/aws/ec2/mapreduce",
-                        "log_stream_name": "{instance_id}/user-data.log"
-                    },
-                    {
-                        "file_path": "/opt/mapreduce/logs/*.log",
-                        "log_group_name": "/aws/ec2/mapreduce",
-                        "log_stream_name": "{instance_id}/application.log"
-                    }
-                ]
-            }
-        }
-    },
-    "metrics": {
-        "namespace": "MapReduce/EC2",
-        "metrics_collected": {
-            "cpu": {
-                "measurement": ["cpu_usage_idle", "cpu_usage_iowait", "cpu_usage_user", "cpu_usage_system"],
-                "metrics_collection_interval": 60
-            },
-            "disk": {
-                "measurement": ["used_percent"],
-                "metrics_collection_interval": 60,
-                "resources": ["*"]
-            },
-            "mem": {
-                "measurement": ["mem_used_percent"],
-                "metrics_collection_interval": 60
-            }
-        }
-    }
-}
-EOF
+systemctl start mapreduce.service
 
 # Start CloudWatch agent
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
     -a fetch-config \
     -m ec2 \
-    -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+    -c file:/opt/mapreduce/cloudwatch-config.json \
     -s
 
-echo "User data script completed successfully!"
-echo "MapReduce cluster will start automatically on boot."
+echo "MapReduce instance initialization completed successfully!"

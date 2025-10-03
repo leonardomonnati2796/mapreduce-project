@@ -8,11 +8,18 @@ ENV GOSUMDB=sum.golang.org
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 
-# Copia tutto il progetto (approccio semplificato)
-COPY . .
+# Copia solo i file necessari per il build (ottimizzazione cache Docker)
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Compila direttamente senza separare il download
-RUN go build -o mapreduce ./src
+# Copia il codice sorgente
+COPY src/ ./src/
+COPY web/ ./web/
+COPY scripts/ ./scripts/
+COPY data/ ./data/
+
+# Compila con ottimizzazioni
+RUN go build -ldflags="-s -w" -o mapreduce ./src
 
 # --- Fase 2: Release ---
 FROM alpine:latest

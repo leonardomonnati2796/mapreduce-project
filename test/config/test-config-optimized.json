@@ -1,0 +1,96 @@
+{
+  "testSuite": {
+    "name": "MapReduce Test Suite Optimized",
+    "version": "2.0.0",
+    "description": "Test suite ottimizzata per il sistema MapReduce"
+  },
+  "execution": {
+    "parallel": true,
+    "maxConcurrentTests": 3,
+    "timeout": 300,
+    "retryCount": 2,
+    "retryDelay": 5
+  },
+  "reporting": {
+    "format": ["console", "json", "html"],
+    "outputDir": "./reports",
+    "includeMetrics": true,
+    "includePerformance": true,
+    "includeCoverage": true
+  },
+  "categories": {
+    "core": {
+      "enabled": true,
+      "timeout": 60,
+      "description": "Test funzioni core MapReduce"
+    },
+    "raft": {
+      "enabled": true,
+      "timeout": 120,
+      "description": "Test consenso Raft"
+    },
+    "integration": {
+      "enabled": true,
+      "timeout": 180,
+      "description": "Test integrazione completa"
+    },
+    "dashboard": {
+      "enabled": true,
+      "timeout": 90,
+      "description": "Test dashboard web"
+    },
+    "websocket": {
+      "enabled": true,
+      "timeout": 60,
+      "description": "Test WebSocket real-time"
+    },
+    "cluster": {
+      "enabled": true,
+      "timeout": 150,
+      "description": "Test gestione cluster"
+    }
+  },
+  "environments": {
+    "local": {
+      "baseUrl": "http://localhost:8080",
+      "apiUrl": "http://localhost:8080/api/v1",
+      "timeout": 30
+    },
+    "docker": {
+      "baseUrl": "http://localhost:8080",
+      "apiUrl": "http://localhost:8080/api/v1",
+      "timeout": 45
+    },
+    "aws": {
+      "baseUrl": "http://ec2-instance:8080",
+      "apiUrl": "http://ec2-instance:8080/api/v1",
+      "timeout": 60
+    }
+  },
+  "performance": {
+    "maxResponseTime": 2.0,
+    "maxMemoryUsage": 100,
+    "maxCpuUsage": 80,
+    "concurrentUsers": 10
+  },
+  "security": {
+    "checkHeaders": true,
+    "checkSsl": false,
+    "checkAuth": false,
+    "allowedOrigins": ["*"]
+  },
+  "notifications": {
+    "email": {
+      "enabled": false,
+      "recipients": []
+    },
+    "slack": {
+      "enabled": false,
+      "webhook": ""
+    },
+    "teams": {
+      "enabled": false,
+      "webhook": ""
+    }
+  }
+}

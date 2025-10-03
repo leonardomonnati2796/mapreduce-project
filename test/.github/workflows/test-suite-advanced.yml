@@ -1,0 +1,262 @@
+name: MapReduce Test Suite Advanced
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Test environment'
+        required: true
+        default: 'local'
+        type: choice
+        options:
+        - local
+        - docker
+        - aws
+      categories:
+        description: 'Test categories'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - core
+        - raft
+        - integration
+        - dashboard
+        - websocket
+        - cluster
+      parallel:
+        description: 'Run tests in parallel'
+        required: true
+        default: true
+        type: boolean
+      verbose:
+        description: 'Verbose output'
+        required: true
+        default: false
+        type: boolean
+
+env:
+  TEST_ENVIRONMENT: ${{ github.event.inputs.environment || 'local' }}
+  TEST_CATEGORIES: ${{ github.event.inputs.categories || 'all' }}
+  TEST_PARALLEL: ${{ github.event.inputs.parallel || 'true' }}
+  TEST_VERBOSE: ${{ github.event.inputs.verbose || 'false' }}
+
+jobs:
+  test:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        environment: [local, docker, aws]
+        categories: [core, raft, integration, dashboard, websocket, cluster]
+        exclude:
+          - environment: aws
+            categories: [core, raft, integration]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Setup Docker
+      if: matrix.environment == 'docker'
+      run: |
+        docker --version
+        docker-compose --version
+    
+    - name: Start MapReduce System
+      run: |
+        if ("${{ matrix.environment }}" -eq "docker") {
+          cd test/docker
+          docker-compose up -d
+          Start-Sleep -Seconds 30
+        } elseif ("${{ matrix.environment }}" -eq "local") {
+          cd src
+          go run main.go &
+          Start-Sleep -Seconds 10
+        }
+    
+    - name: Run Tests
+      run: |
+        cd test
+        .\run-tests-optimized.ps1 -Environment "${{ matrix.environment }}" -Categories @("${{ matrix.categories }}") -GenerateReport -Verbose
+    
+    - name: Upload Test Reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-reports-${{ matrix.environment }}-${{ matrix.categories }}
+        path: test/reports/
+    
+    - name: Upload Test Logs
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: test-logs-${{ matrix.environment }}-${{ matrix.categories }}
+        path: test/logs/
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        if ("${{ matrix.environment }}" -eq "docker") {
+          cd test/docker
+          docker-compose down
+        } elseif ("${{ matrix.environment }}" -eq "local") {
+          Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+
+  performance:
+    runs-on: windows-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Start MapReduce System
+      run: |
+        cd src
+        go run main.go &
+        Start-Sleep -Seconds 10
+    
+    - name: Run Performance Tests
+      run: |
+        cd test
+        .\run-tests-optimized.ps1 -Categories @("dashboard", "websocket", "cluster") -MaxConcurrentTests 5 -GenerateReport
+    
+    - name: Upload Performance Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-reports
+        path: test/reports/
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+  security:
+    runs-on: windows-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Start MapReduce System
+      run: |
+        cd src
+        go run main.go &
+        Start-Sleep -Seconds 10
+    
+    - name: Run Security Tests
+      run: |
+        cd test
+        .\test-suites\test-dashboard-optimized.ps1 -Verbose
+    
+    - name: Upload Security Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: test/reports/
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+  coverage:
+    runs-on: windows-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup PowerShell
+      uses: actions/setup-powershell@v1
+      with:
+        version: '7.2'
+    
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Start MapReduce System
+      run: |
+        cd src
+        go run main.go &
+        Start-Sleep -Seconds 10
+    
+    - name: Run Coverage Tests
+      run: |
+        cd test
+        .\run-tests-optimized.ps1 -Categories @("core", "raft", "integration") -GenerateReport
+    
+    - name: Upload Coverage Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-reports
+        path: test/reports/
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        Get-Process | Where-Object { $_.ProcessName -like "*go*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+  publish:
+    runs-on: windows-latest
+    needs: [test, performance, security, coverage]
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Publish to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./test/reports
+        destination_dir: test-reports

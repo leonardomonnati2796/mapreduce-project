@@ -117,6 +117,13 @@ type WorkerHeartbeatReply struct {
 	Message string `json:"message"`
 }
 
+// Strutture per ottenere il conteggio dei worker attivi
+type GetWorkerCountArgs struct{}
+type WorkerCountReply struct {
+	ActiveWorkers int `json:"active_workers"`
+	TotalWorkers  int `json:"total_workers"`
+}
+
 func getIntermediateFileName(mapTaskID, reduceTaskID int) string {
 	basePath := os.Getenv("TMP_PATH")
 	if basePath == "" {
