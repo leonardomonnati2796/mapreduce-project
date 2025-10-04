@@ -52,6 +52,8 @@ type Dashboard struct {
 	clients      map[*websocket.Conn]bool
 	clientsMutex sync.RWMutex
 	broadcast    chan []byte
+	// Enhanced WebSocket manager
+	wsManager    *WebSocketManager
 	// Load balancer support
 	loadBalancer *LoadBalancer
 	s3Manager    *S3StorageManager
@@ -201,6 +203,8 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		},
 		// Inizializza metriche Prometheus
 		prometheusMetrics: NewPrometheusMetrics(),
+		// Inizializza WebSocket manager avanzato
+		wsManager: NewWebSocketManager(),
 	}
 
 	// Inizializza load balancer se abilitato
@@ -222,8 +226,14 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 	}
 
 	d.setupRoutes()
+	
+	// Avvia il WebSocket manager avanzato
+	go d.wsManager.Start()
+	
+	// Mantieni compatibilità con il sistema esistente
 	go d.handleWebSocketMessages()
 	go d.startRealTimeUpdates()
+	
 	return d, nil
 }
 
@@ -279,13 +289,15 @@ func (d *Dashboard) setupRoutes() {
 
 		// Performance endpoints
 		api.GET("/performance", d.getPerformanceStatsEndpoint)
-		
+
 		// Prometheus metrics endpoint
 		api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	}
 
-	// WebSocket endpoint
+	// WebSocket endpoints
 	d.router.GET("/ws", d.handleWebSocket)
+	d.router.GET("/ws/advanced", d.handleAdvancedWebSocket)
+	d.router.GET("/ws/stats", d.getWebSocketStats)
 
 	// Web routes
 	d.router.GET("/", d.getIndex)
@@ -488,7 +500,7 @@ func (d *Dashboard) getDashboardData() DashboardData {
 
 	// Salva nella cache
 	d.dataCache.Set(&data)
-	
+
 	// Aggiorna metriche di performance
 	d.mu.Lock()
 	d.lastUpdate = now
@@ -658,7 +670,7 @@ func (d *Dashboard) GetPerformanceStats() map[string]interface{} {
 		"pools_enabled":     true, // I pool sono sempre abilitati
 		"websocket_clients": len(d.clients),
 	}
-	
+
 	// Aggiungi metriche Prometheus se disponibili
 	if d.prometheusMetrics != nil {
 		stats["prometheus_enabled"] = true
@@ -667,7 +679,7 @@ func (d *Dashboard) GetPerformanceStats() map[string]interface{} {
 	} else {
 		stats["prometheus_enabled"] = false
 	}
-	
+
 	return stats
 }
 
@@ -1898,9 +1910,64 @@ func (d *Dashboard) broadcastUpdate() {
 		return // Nessun client connesso
 	}
 
+	// Usa il WebSocket manager avanzato se disponibile
+	if d.wsManager != nil {
+		d.broadcastAdvancedUpdate()
+		return
+	}
+
+	// Fallback al sistema legacy
+	d.broadcastLegacyUpdate()
+}
+
+// broadcastAdvancedUpdate usa il WebSocket manager avanzato
+func (d *Dashboard) broadcastAdvancedUpdate() {
+	// Usa i dati dalla cache se disponibili per ridurre la latenza
+	if cachedData, hit := d.dataCache.Get(); hit {
+		// Broadcast metriche
+		d.wsManager.BroadcastMetricsUpdate(cachedData.Metrics)
+		
+		// Broadcast job updates
+		d.wsManager.BroadcastJobUpdate(cachedData.Jobs)
+		
+		// Broadcast worker updates
+		d.wsManager.BroadcastWorkerUpdate(cachedData.Workers)
+		
+		// Broadcast master updates
+		d.wsManager.BroadcastMasterUpdate(cachedData.Masters)
+		
+		// Broadcast system health
+		d.wsManager.BroadcastSystemHealthUpdate(cachedData.Health)
+		
+		// Broadcast performance stats
+		performanceStats := d.GetPerformanceStats()
+		d.wsManager.BroadcastPerformanceUpdate(performanceStats)
+	} else {
+		// Fallback: raccoglie i dati in tempo reale
+		mastersData, _ := d.getMastersData()
+		workersData, _ := d.getWorkersData()
+		healthData := d.healthChecker.CheckAll(context.Background())
+		jobsData, _ := d.getJobsData()
+		metricsData, _ := d.getMetricsData()
+
+		// Broadcast tutti i dati
+		d.wsManager.BroadcastMasterUpdate(mastersData)
+		d.wsManager.BroadcastWorkerUpdate(workersData)
+		d.wsManager.BroadcastSystemHealthUpdate(healthData)
+		d.wsManager.BroadcastJobUpdate(jobsData)
+		d.wsManager.BroadcastMetricsUpdate(metricsData)
+		
+		// Performance stats
+		performanceStats := d.GetPerformanceStats()
+		d.wsManager.BroadcastPerformanceUpdate(performanceStats)
+	}
+}
+
+// broadcastLegacyUpdate usa il sistema WebSocket legacy
+func (d *Dashboard) broadcastLegacyUpdate() {
 	// Usa i dati dalla cache se disponibili per ridurre la latenza
 	var updateData map[string]interface{}
-
+	
 	// Prova a usare i dati dalla cache
 	if cachedData, hit := d.dataCache.Get(); hit {
 		updateData = map[string]interface{}{
@@ -1942,7 +2009,7 @@ func (d *Dashboard) broadcastUpdate() {
 	case d.broadcast <- jsonData:
 		// Aggiorna metriche
 		d.mu.Lock()
-		d.clientCount = int64(clientCount)
+		d.clientCount = int64(len(d.clients))
 		d.mu.Unlock()
 	case <-time.After(100 * time.Millisecond):
 		// Se il canale è pieno, salta questo aggiornamento
@@ -2246,10 +2313,23 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	connectionCount := len(d.clients)
 	d.clientsMutex.RUnlock()
 	
+	// Usa le metriche del WebSocket manager se disponibile
+	wsMessages := int64(1)
+	wsErrors := int64(0)
+	if d.wsManager != nil {
+		wsStats := d.wsManager.GetStats()
+		if msgCount, ok := wsStats["message_count"].(int64); ok {
+			wsMessages = msgCount
+		}
+		if errCount, ok := wsStats["error_count"].(int64); ok {
+			wsErrors = errCount
+		}
+	}
+	
 	d.prometheusMetrics.UpdateWebSocketMetrics(
 		connectionCount,
-		1, // messages sent
-		0, // errors
+		wsMessages,
+		wsErrors,
 	)
 
 	// Aggiorna metriche di cache
@@ -2260,7 +2340,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	} else {
 		cacheMisses = 1
 	}
-	
+
 	d.prometheusMetrics.UpdateCacheMetrics(
 		cacheHits,
 		cacheMisses,
@@ -2268,9 +2348,9 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	)
 
 	// Aggiorna metriche di performance
-	poolUsage := 0.5 // Esempio: 50% di utilizzo dei pool
+	poolUsage := 0.5        // Esempio: 50% di utilizzo dei pool
 	concurrentRequests := 1 // Esempio: 1 richiesta concorrente
-	
+
 	d.prometheusMetrics.UpdatePerformanceMetrics(
 		collectionTime,
 		poolUsage,
@@ -2281,7 +2361,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	systemHealthy := data.Health.Status == "healthy"
 	lbHealthy := d.loadBalancer != nil
 	s3Healthy := d.s3Manager != nil
-	
+
 	d.prometheusMetrics.UpdateSystemMetrics(
 		systemHealthy,
 		lbHealthy,
@@ -2292,7 +2372,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	activeJobs := len(data.Jobs)
 	completedJobs := 0
 	failedJobs := 0
-	
+
 	for _, job := range data.Jobs {
 		switch job.Status {
 		case "completed":
@@ -2301,7 +2381,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 			failedJobs++
 		}
 	}
-	
+
 	d.prometheusMetrics.UpdateJobMetrics(
 		int64(len(data.Jobs)),
 		int64(activeJobs),
@@ -2320,7 +2400,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	// Aggiorna metriche dei master
 	activeMasters := 0
 	leaderMasters := 0
-	
+
 	for _, master := range data.Masters {
 		if master.Role == "leader" {
 			leaderMasters++
@@ -2329,10 +2409,177 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 			activeMasters++
 		}
 	}
-	
+
 	d.prometheusMetrics.UpdateMasterMetrics(
 		len(data.Masters),
 		activeMasters,
 		leaderMasters,
 	)
+}
+
+// handleAdvancedWebSocket gestisce le connessioni WebSocket avanzate
+func (d *Dashboard) handleAdvancedWebSocket(c *gin.Context) {
+	if d.wsManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "WebSocket manager not initialized",
+		})
+		return
+	}
+
+	conn, err := d.wsManager.upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		LogError("WebSocket upgrade failed: %v", err)
+		return
+	}
+
+	// Crea un nuovo client WebSocket
+	client := &WebSocketClient{
+		conn:    conn,
+		send:    make(chan []byte, 256),
+		manager: d.wsManager,
+		userID:  c.GetHeader("X-User-ID"), // Opzionale: autenticazione
+		lastPing: time.Now(),
+	}
+
+	// Registra il client
+	d.wsManager.register <- client
+
+	// Avvia le goroutine per gestire il client
+	go d.handleAdvancedWebSocketClient(client)
+}
+
+// handleAdvancedWebSocketClient gestisce un client WebSocket avanzato
+func (d *Dashboard) handleAdvancedWebSocketClient(client *WebSocketClient) {
+	defer func() {
+		client.manager.unregister <- client
+		client.conn.Close()
+	}()
+
+	// Configura i timeout
+	client.conn.SetReadDeadline(time.Now().Add(client.manager.pongWait))
+	client.conn.SetPongHandler(func(string) error {
+		client.conn.SetReadDeadline(time.Now().Add(client.manager.pongWait))
+		client.lastPing = time.Now()
+		return nil
+	})
+
+	// Avvia la goroutine per inviare messaggi
+	go d.writeAdvancedWebSocketPump(client)
+
+	// Gestisce i messaggi in arrivo
+	for {
+		var msg WebSocketMessage
+		err := client.conn.ReadJSON(&msg)
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				LogError("WebSocket error: %v", err)
+			}
+			break
+		}
+
+		// Gestisce i diversi tipi di messaggi
+		d.handleAdvancedWebSocketMessage(client, msg)
+	}
+}
+
+// handleAdvancedWebSocketMessage gestisce i messaggi WebSocket avanzati
+func (d *Dashboard) handleAdvancedWebSocketMessage(client *WebSocketClient, msg WebSocketMessage) {
+	switch msg.Type {
+	case "subscribe":
+		if topic, ok := msg.Data.(string); ok {
+			d.wsManager.SubscribeToTopic(client, topic)
+		}
+	case "unsubscribe":
+		if topic, ok := msg.Data.(string); ok {
+			d.wsManager.UnsubscribeFromTopic(client, topic)
+		}
+	case "ping":
+		// Risponde al ping
+		pongMsg := WebSocketMessage{
+			Type:      "pong",
+			Timestamp: time.Now(),
+		}
+		d.wsManager.sendToClient(client, pongMsg)
+	case "get_stats":
+		// Invia le statistiche del dashboard
+		stats := d.GetPerformanceStats()
+		statsMsg := WebSocketMessage{
+			Type:      "dashboard_stats",
+			Timestamp: time.Now(),
+			Data:      stats,
+		}
+		d.wsManager.sendToClient(client, statsMsg)
+	case "get_metrics":
+		// Invia le metriche Prometheus
+		if d.prometheusMetrics != nil {
+			metrics := map[string]interface{}{
+				"cache_hit_ratio": d.prometheusMetrics.GetCacheHitRatio(),
+				"system_health_score": d.prometheusMetrics.GetSystemHealthScore(),
+			}
+			metricsMsg := WebSocketMessage{
+				Type:      "prometheus_metrics",
+				Timestamp: time.Now(),
+				Data:      metrics,
+			}
+			d.wsManager.sendToClient(client, metricsMsg)
+		}
+	default:
+		LogDebug("Unknown WebSocket message type: %s", msg.Type)
+	}
+}
+
+// writeAdvancedWebSocketPump gestisce l'invio di messaggi WebSocket
+func (d *Dashboard) writeAdvancedWebSocketPump(client *WebSocketClient) {
+	ticker := time.NewTicker(client.manager.pingPeriod)
+	defer func() {
+		ticker.Stop()
+		client.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-client.send:
+			client.conn.SetWriteDeadline(time.Now().Add(client.manager.writeWait))
+			if !ok {
+				client.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			w, err := client.conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				return
+			}
+			w.Write(message)
+
+			// Aggiungi messaggi in coda se ce ne sono
+			n := len(client.send)
+			for i := 0; i < n; i++ {
+				w.Write([]byte{'\n'})
+				w.Write(<-client.send)
+			}
+
+			if err := w.Close(); err != nil {
+				return
+			}
+
+		case <-ticker.C:
+			client.conn.SetWriteDeadline(time.Now().Add(client.manager.writeWait))
+			if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// getWebSocketStats restituisce le statistiche WebSocket
+func (d *Dashboard) getWebSocketStats(c *gin.Context) {
+	if d.wsManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "WebSocket manager not initialized",
+		})
+		return
+	}
+
+	stats := d.wsManager.GetStats()
+	c.JSON(http.StatusOK, stats)
 }
