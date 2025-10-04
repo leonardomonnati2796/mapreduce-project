@@ -1271,6 +1271,51 @@ Implementazione di logging strutturato con livelli configurabili:
 \item \textbf{Correlation}: Tracciamento delle richieste attraverso i servizi
 \end{itemize}
 
+\subsection{Load Balancer Avanzato con Fault Tolerance}
+
+\subsubsection{Panoramica del Load Balancer}
+
+Il sistema implementa un load balancer avanzato con strategie multiple di bilanciamento del carico e fault tolerance integrato:
+
+\textbf{Strategie di Load Balancing}:
+\begin{itemize}
+\item \textbf{Round Robin}: Distribuzione ciclica delle richieste
+\item \textbf{Weighted Round Robin}: Distribuzione basata su pesi dei server
+\item \textbf{Least Connections}: Selezione del server con meno connessioni attive
+\item \textbf{Random}: Selezione casuale tra server disponibili
+\item \textbf{Health Based}: Selezione basata sullo stato di salute dei server
+\end{itemize}
+
+\textbf{Fault Tolerance Avanzato}:
+\begin{itemize}
+\item \textbf{Mapper Failures}: Gestione fallimenti mapper con verifica completamento e trasmissione dati
+\item \textbf{Reducer Failures}: Recovery da checkpoint per fallimenti reducer con ripristino stato
+\item \textbf{Checkpointing}: Sistema di checkpoint per recovery automatico
+\item \textbf{Data Integrity}: Verifica integrità dati durante il recovery
+\end{itemize}
+
+\subsubsection{Health Checking Differenziato}
+
+Il sistema implementa due livelli distinti di health checking:
+
+\textbf{Health Checking Infrastrutturale (health.go)}:
+\begin{itemize}
+\item \textbf{Monitoraggio Sistema}: CPU, memoria, disco, rete
+\item \textbf{Sicurezza}: SSL, firewall, vulnerabilità
+\item \textbf{Performance}: Tempi risposta, throughput, error rate
+\item \textbf{Dipendenze Esterne}: S3, Redis, Kafka, database
+\item \textbf{Risorse Sistema}: Utilizzo risorse OS e infrastruttura
+\end{itemize}
+
+\textbf{Health Checking Applicativo (loadbalancer.go)}:
+\begin{itemize}
+\item \textbf{Server Health}: Stato server e worker
+\item \textbf{Task Management}: Gestione task MapReduce
+\item \textbf{Fault Tolerance}: Recovery da fallimenti
+\item \textbf{Load Balancing}: Selezione server ottimale
+\item \textbf{Statistics}: Metriche server e performance
+\end{itemize}
+
 \subsection{Web Dashboard}
 
 \subsubsection{Panoramica del Dashboard}
@@ -2142,6 +2187,94 @@ I vantaggi della containerizzazione includono:
 \item \textbf{Resource Management}: Gestione efficiente delle risorse
 \end{itemize}
 
+\section{Test delle Nuove Funzionalità}
+
+\subsection{Test Load Balancer}
+
+Il sistema include test completi per tutte le funzionalità del load balancer:
+
+\textbf{Test di Creazione}:
+\begin{itemize}
+\item Creazione load balancer con diverse strategie
+\item Verifica inizializzazione corretta
+\item Test configurazione server di default
+\end{itemize}
+
+\textbf{Test di Selezione Server}:
+\begin{itemize}
+\item Test strategia Round Robin
+\item Test strategia Weighted Round Robin
+\item Test strategia Least Connections
+\item Test strategia Random
+\item Test strategia Health Based
+\end{itemize}
+
+\textbf{Test di Gestione Server}:
+\begin{itemize}
+\item Aggiunta server dinamica
+\item Rimozione server sicura
+\item Aggiornamento configurazioni server
+\item Test gestione server non disponibili
+\end{itemize}
+
+\textbf{Test di Health Checking}:
+\begin{itemize}
+\item Test health checking unificato
+\item Test rilevamento server non sani
+\item Test recovery automatico
+\item Test statistiche server
+\end{itemize}
+
+\textbf{Test di Fault Tolerance}:
+\begin{itemize}
+\item Test gestione fallimenti mapper
+\item Test gestione fallimenti reducer
+\item Test sistema di checkpointing
+\item Test recovery da fallimenti
+\end{itemize}
+
+\subsection{Test Health Checking Differenziato}
+
+\textbf{Test Health Checking Infrastrutturale}:
+\begin{itemize}
+\item Test monitoraggio CPU e memoria
+\item Test controllo spazio disco
+\item Test verifica sicurezza
+\item Test dipendenze esterne
+\item Test metriche performance
+\end{itemize}
+
+\textbf{Test Health Checking Applicativo}:
+\begin{itemize}
+\item Test health check server HTTP
+\item Test monitoraggio task MapReduce
+\item Test gestione worker
+\item Test statistiche applicative
+\end{itemize}
+
+\textbf{Test Integrazione}:
+\begin{itemize}
+\item Test correlazione metriche infrastrutturali e applicative
+\item Test decisioni intelligenti del load balancer
+\item Test monitoring completo del sistema
+\end{itemize}
+
+\subsection{Test Cross-Platform}
+
+\textbf{Test Compatibilità Windows}:
+\begin{itemize}
+\item Test esecuzione su Windows PowerShell
+\item Test gestione path Windows
+\item Test librerie cross-platform
+\end{itemize}
+
+\textbf{Test Compatibilità Unix}:
+\begin{itemize}
+\item Test esecuzione su sistemi Unix-like
+\item Test syscall Unix-specific
+\item Test gestione permessi file
+\end{itemize}
+
 \section{Comandi Eseguiti per i Test}
 
 \subsection{Test di Compilazione}
@@ -2203,6 +2336,54 @@ docker-compose logs master0
 
 # Lista job
 .\mapreduce-cli.exe job list
+\end{lstlisting}
+
+\section{Comandi per le Nuove Funzionalità}
+
+\subsection{Test Load Balancer}
+
+\begin{lstlisting}[language=bash]
+# Test load balancer completo
+go test -v test/loadbalancer_test.go -run TestLoadBalancerCreation
+
+# Test strategie di load balancing
+go test -v test/loadbalancer_test.go -run TestLoadBalancerStrategies
+
+# Test gestione server
+go test -v test/loadbalancer_test.go -run TestLoadBalancerServerManagement
+
+# Test health checking
+go test -v test/loadbalancer_test.go -run TestLoadBalancerHealthChecking
+
+# Test fault tolerance
+go test -v test/loadbalancer_test.go -run TestLoadBalancerFaultTolerance
+\end{lstlisting}
+
+\subsection{Test Health Checking}
+
+\begin{lstlisting}[language=bash]
+# Test health checking infrastrutturale
+go run health_demo_simple.go
+
+# Test health checking applicativo
+go run health_vs_loadbalancer_demo.go
+
+# Test fault tolerance avanzato
+go run fault_tolerance_demo_simple.go
+\end{lstlisting}
+
+\subsection{Test Cross-Platform}
+
+\begin{lstlisting}[language=bash]
+# Test su Windows PowerShell
+go test -v test/loadbalancer_test.go
+
+# Test su sistemi Unix
+go test -v test/loadbalancer_test.go
+
+# Test compatibilità librerie
+go mod tidy
+go build -o mapreduce .
 \end{lstlisting}
 
 \section{Comandi di Build e Deploy}
@@ -4207,6 +4388,142 @@ raft:
 \item Monitorare l'utilizzo delle risorse durante l'elaborazione
 \end{itemize}
 
+\section{Load Balancer e Health Checking Avanzati}
+
+\subsection{Architettura del Load Balancer}
+
+Il sistema implementa un load balancer sofisticato che gestisce il bilanciamento del carico tra i worker del cluster MapReduce. L'architettura è progettata per essere altamente configurabile e fault-tolerant.
+
+\subsubsection{Strategie di Load Balancing}
+
+Il load balancer supporta cinque strategie diverse per la selezione dei server:
+
+\begin{itemize}
+\item \textbf{RoundRobin}: Distribuzione ciclica delle richieste tra tutti i server disponibili
+\item \textbf{WeightedRoundRobin}: Distribuzione basata su pesi assegnati ai server
+\item \textbf{LeastConnections}: Selezione del server con il minor numero di connessioni attive
+\item \textbf{Random}: Selezione casuale tra server sani
+\item \textbf{HealthBased}: Selezione basata sullo stato di salute dei server
+\end{itemize}
+
+\subsubsection{Gestione Server}
+
+Il sistema include funzionalità complete per la gestione dinamica dei server:
+
+\begin{itemize}
+\item \textbf{Add Server}: Aggiunta dinamica di nuovi server al cluster
+\item \textbf{Remove Server}: Rimozione sicura di server dal cluster
+\item \textbf{Health Monitoring}: Monitoraggio continuo dello stato dei server
+\item \textbf{Statistics}: Raccolta di metriche dettagliate per ogni server
+\end{itemize}
+
+\subsection{Fault Tolerance Avanzato}
+
+\subsubsection{Gestione Fallimenti Mapper}
+
+Il sistema implementa algoritmi sofisticati per la gestione dei fallimenti dei mapper:
+
+\textbf{Scenari di Fallimento}:
+\begin{itemize}
+\item \textbf{Prima del Completamento}: Il task viene riassegnato a un nuovo mapper
+\item \textbf{Dopo il Completamento}: Verifica che i dati siano stati trasmessi al reducer
+\item \textbf{Verifica Integrità}: Controllo dell'integrità dei dati intermedi
+\end{itemize}
+
+\textbf{Algoritmo di Recovery}:
+\begin{enumerate}
+\item Rilevamento del fallimento del mapper
+\item Verifica dello stato del task (non iniziato, in corso, completato)
+\item Se completato: verifica trasmissione dati al reducer
+\item Se non completato: riassegnazione a nuovo mapper
+\item Cleanup dei file temporanei parziali
+\end{enumerate}
+
+\subsubsection{Gestione Fallimenti Reducer}
+
+Il sistema implementa un sistema di checkpointing per il recovery dei reducer:
+
+\textbf{Scenari di Fallimento}:
+\begin{itemize}
+\item \textbf{Prima di Ricevere Dati}: Il nuovo reducer riceve gli stessi dati del precedente
+\item \textbf{Dopo Ricezione ma Prima di Processing}: Recovery da checkpoint iniziale
+\item \textbf{Durante Processing}: Recovery da checkpoint intermedio
+\end{itemize}
+
+\textbf{Sistema di Checkpointing}:
+\begin{itemize}
+\item \textbf{Checkpoint Iniziale}: Stato prima dell'inizio del processing
+\item \textbf{Checkpoint Intermedi}: Stato durante il processing
+\item \textbf{Data Integrity}: Verifica integrità dei dati durante il recovery
+\item \textbf{State Restoration}: Ripristino completo dello stato del reducer
+\end{itemize}
+
+\subsection{Health Checking Differenziato}
+
+\subsubsection{Health Checking Infrastrutturale}
+
+Il sistema \texttt{health.go} implementa un monitoraggio completo dell'infrastruttura:
+
+\textbf{Metriche di Sistema}:
+\begin{itemize}
+\item \textbf{CPU Usage}: Utilizzo CPU del sistema operativo
+\item \textbf{Memory Usage}: Utilizzo memoria RAM
+\item \textbf{Disk Usage}: Utilizzo spazio disco con dettagli per filesystem
+\item \textbf{Network Latency}: Latenza di rete locale ed esterna
+\end{itemize}
+
+\textbf{Monitoraggio Sicurezza}:
+\begin{itemize}
+\item \textbf{SSL Status}: Stato dei certificati SSL
+\item \textbf{Firewall Status}: Stato del firewall di sistema
+\item \textbf{Security Vulnerabilities}: Rilevamento vulnerabilità note
+\end{itemize}
+
+\textbf{Dipendenze Esterne}:
+\begin{itemize}
+\item \textbf{S3 Connectivity}: Connessione ai servizi S3
+\item \textbf{Database Status}: Stato delle connessioni database
+\item \textbf{External APIs}: Disponibilità di API esterne
+\end{itemize}
+
+\subsubsection{Health Checking Applicativo}
+
+Il sistema \texttt{loadbalancer.go} implementa il monitoraggio applicativo:
+
+\textbf{Server Health}:
+\begin{itemize}
+\item \textbf{HTTP Health Checks}: Verifica risposta HTTP dei server
+\item \textbf{Response Time}: Tempo di risposta dei server
+\item \textbf{Error Rate}: Tasso di errore per server
+\item \textbf{Connection Status}: Stato delle connessioni
+\end{itemize}
+
+\textbf{Task Management}:
+\begin{itemize}
+\item \textbf{Task Status}: Stato dei task MapReduce
+\item \textbf{Worker Availability}: Disponibilità dei worker
+\item \textbf{Queue Status}: Stato delle code di elaborazione
+\end{itemize}
+
+\subsection{Integrazione e Complementarietà}
+
+I due sistemi di health checking sono progettati per essere complementari:
+
+\textbf{Integrazione}:
+\begin{itemize}
+\item Il load balancer utilizza le metriche infrastrutturali per decisioni intelligenti
+\item Le metriche applicative vengono correlate con quelle infrastrutturali
+\item Sistema unificato di health checking per monitoring completo
+\end{itemize}
+
+\textbf{Benefici}:
+\begin{itemize}
+\item \textbf{Monitoring Completo}: Copertura sia infrastrutturale che applicativa
+\item \textbf{Decisioni Intelligenti}: Load balancer con metriche complete
+\item \textbf{Fault Tolerance Integrato}: Recovery basato su causa del fallimento
+\item \textbf{Observability Avanzata}: Visibilità completa del sistema
+\end{itemize}
+
 \section{Conclusioni}
 
 Il progetto ha implementato con successo un sistema MapReduce fault-tolerant utilizzando il protocollo Raft per il consenso distribuito. Questo sistema rappresenta un'evoluzione significativa rispetto alle implementazioni MapReduce tradizionali, integrando meccanismi avanzati di fault tolerance e observability.
@@ -4222,6 +4539,10 @@ Il sistema dimostra le seguenti caratteristiche chiave:
 \item \textbf{Observability}: Monitoring e debugging avanzati con dashboard web e metriche Prometheus
 \item \textbf{Usability}: Interfaccia CLI completa e dashboard web user-friendly
 \item \textbf{Production Ready}: Configurazione e orchestrazione Docker per deployment in produzione
+\item \textbf{Load Balancing Avanzato}: 5 strategie di bilanciamento del carico con selezione intelligente
+\item \textbf{Fault Tolerance Avanzato}: Gestione sofisticata dei fallimenti mapper/reducer con checkpointing
+\item \textbf{Health Checking Differenziato}: Monitoraggio separato per infrastruttura e applicazione
+\item \textbf{Cross-Platform Support}: Compatibilità Windows e Unix con librerie appropriate
 \end{itemize}
 
 \subsection{Innovazioni Implementate}
@@ -4236,6 +4557,10 @@ Le estensioni avanzate implementate rendono il sistema adatto per ambienti di pr
 \item \textbf{CLI Tools}: Strumenti a riga di comando per automazione e gestione
 \item \textbf{Health Monitoring}: Sistema di health checks per tutti i componenti
 \item \textbf{Docker Orchestration}: Containerizzazione completa con Docker Compose
+\item \textbf{Load Balancer Avanzato}: 5 strategie di load balancing con fault tolerance integrato
+\item \textbf{Fault Tolerance Avanzato}: Gestione fallimenti mapper/reducer con checkpointing
+\item \textbf{Health Checking Differenziato}: Monitoraggio infrastrutturale e applicativo separati
+\item \textbf{Cross-Platform Compatibility}: Supporto Windows e Unix con librerie appropriate
 \end{itemize}
 
 \textbf{Tecnologie Utilizzate}:

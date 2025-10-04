@@ -83,7 +83,7 @@ func (s *S3Client) UploadFile(localPath, s3Key string) error {
 		return fmt.Errorf("errore upload %s: %v", s3Key, err)
 	}
 
-	LogInfo("File caricato su S3: %s -> s3://%s/%s", localPath, s.bucket, s3Key)
+	fmt.Printf("File caricato su S3: %s -> s3://%s/%s\n", localPath, s.bucket, s3Key)
 	return nil
 }
 
@@ -109,14 +109,14 @@ func (s *S3Client) DownloadFile(s3Key, localPath string) error {
 		return fmt.Errorf("errore download %s: %v", s3Key, err)
 	}
 
-	LogInfo("File scaricato da S3: s3://%s/%s -> %s", s.bucket, s3Key, localPath)
+	fmt.Printf("File scaricato da S3: s3://%s/%s -> %s\n", s.bucket, s3Key, localPath)
 	return nil
 }
 
 // SyncDirectory sincronizza una directory locale con S3
 func (s *S3Client) SyncDirectory(localPath, s3Prefix string) error {
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
-		LogWarn("Directory %s non esiste, salto sincronizzazione", localPath)
+		fmt.Printf("Directory %s non esiste, salto sincronizzazione\n", localPath)
 		return nil
 	}
 
@@ -148,7 +148,7 @@ func (s *S3Client) BackupToS3(localPath string) error {
 	timestamp := time.Now().Format("2006-01-02-15-04-05")
 	backupPrefix := fmt.Sprintf("backups/%s/", timestamp)
 
-	LogInfo("Iniziando backup su S3 con prefisso: %s", backupPrefix)
+	fmt.Printf("Iniziando backup su S3 con prefisso: %s\n", backupPrefix)
 	return s.SyncDirectory(localPath, backupPrefix)
 }
 
@@ -184,7 +184,7 @@ func (s *S3Client) DeleteFile(s3Key string) error {
 		return fmt.Errorf("errore eliminazione %s: %v", s3Key, err)
 	}
 
-	LogInfo("File eliminato da S3: s3://%s/%s", s.bucket, s3Key)
+	fmt.Printf("File eliminato da S3: s3://%s/%s\n", s.bucket, s3Key)
 	return nil
 }
 
@@ -242,11 +242,11 @@ func NewS3SyncService(config S3Config) (*S3SyncService, error) {
 // Start avvia il servizio di sincronizzazione
 func (s *S3SyncService) Start() {
 	if !s.config.Enabled {
-		LogInfo("S3 sync non abilitato, salto avvio servizio")
+		fmt.Println("S3 sync non abilitato, salto avvio servizio")
 		return
 	}
 
-	LogInfo("Avviando S3 sync service con intervallo %v", s.config.SyncInterval)
+	fmt.Printf("Avviando S3 sync service con intervallo %v\n", s.config.SyncInterval)
 
 	ticker := time.NewTicker(s.config.SyncInterval)
 	defer ticker.Stop()
@@ -259,7 +259,7 @@ func (s *S3SyncService) Start() {
 		case <-ticker.C:
 			s.performSync()
 		case <-s.stopChan:
-			LogInfo("S3 sync service fermato")
+			fmt.Println("S3 sync service fermato")
 			return
 		}
 	}
@@ -272,24 +272,24 @@ func (s *S3SyncService) Stop() {
 
 // performSync esegue la sincronizzazione
 func (s *S3SyncService) performSync() {
-	LogInfo("Iniziando sincronizzazione S3 alle %s", time.Now().Format(time.RFC3339))
+	fmt.Printf("Iniziando sincronizzazione S3 alle %s\n", time.Now().Format(time.RFC3339))
 
 	// Sincronizza file di output
 	if err := s.client.SyncDirectory("/tmp/mapreduce/output", "output/"); err != nil {
-		LogInfo("Errore sincronizzazione output: %v", err)
+		fmt.Printf("Errore sincronizzazione output: %v\n", err)
 	}
 
 	// Sincronizza file intermedi
 	if err := s.client.SyncDirectory("/tmp/mapreduce/intermediate", "intermediate/"); err != nil {
-		LogInfo("Errore sincronizzazione intermediate: %v", err)
+		fmt.Printf("Errore sincronizzazione intermediate: %v\n", err)
 	}
 
 	// Sincronizza file di log
 	if err := s.client.SyncDirectory("/var/log/mapreduce", "logs/"); err != nil {
-		LogInfo("Errore sincronizzazione logs: %v", err)
+		fmt.Printf("Errore sincronizzazione logs: %v\n", err)
 	}
 
-	LogInfo("Sincronizzazione S3 completata")
+	fmt.Println("Sincronizzazione S3 completata")
 }
 
 // BackupNow esegue un backup immediato
@@ -298,7 +298,7 @@ func (s *S3SyncService) BackupNow() error {
 		return fmt.Errorf("S3 non abilitato")
 	}
 
-	LogInfo("Eseguendo backup immediato su S3...")
+	fmt.Println("Eseguendo backup immediato su S3...")
 	return s.client.BackupToS3("/tmp/mapreduce")
 }
 
@@ -325,11 +325,11 @@ func NewS3StorageManager(config S3Config) (*S3StorageManager, error) {
 // Start avvia il servizio S3
 func (sm *S3StorageManager) Start() {
 	if !sm.enabled {
-		LogInfo("S3 storage non abilitato")
+		fmt.Println("S3 storage non abilitato")
 		return
 	}
 
-	LogInfo("Avviando S3 storage manager...")
+	fmt.Println("Avviando S3 storage manager...")
 	go sm.syncService.Start()
 }
 
@@ -368,7 +368,7 @@ func (sm *S3StorageManager) DownloadJobInput(jobID string, localPath string) err
 		localFilePath := filepath.Join(localPath, fileName)
 
 		if err := sm.client.DownloadFile(file, localFilePath); err != nil {
-			LogInfo("Errore download %s: %v", file, err)
+			fmt.Printf("Errore download %s: %v\n", file, err)
 		}
 	}
 
@@ -381,7 +381,7 @@ func (sm *S3StorageManager) BackupClusterData() error {
 		return fmt.Errorf("S3 non abilitato")
 	}
 
-	LogInfo("Eseguendo backup completo del cluster su S3...")
+	fmt.Println("Eseguendo backup completo del cluster su S3...")
 	return sm.syncService.BackupNow()
 }
 
@@ -403,11 +403,11 @@ func (sm *S3StorageManager) RestoreFromBackup(backupTimestamp string, localPath 
 		localFilePath := filepath.Join(localPath, relPath)
 
 		if err := sm.client.DownloadFile(file, localFilePath); err != nil {
-			LogInfo("Errore restore %s: %v", file, err)
+			fmt.Printf("Errore restore %s: %v\n", file, err)
 		}
 	}
 
-	LogInfo("Ripristino completato da backup %s", backupTimestamp)
+	fmt.Printf("Ripristino completato da backup %s\n", backupTimestamp)
 	return nil
 }
 

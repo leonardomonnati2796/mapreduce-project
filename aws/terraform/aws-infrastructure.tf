@@ -525,6 +525,241 @@ resource "aws_iam_instance_profile" "mapreduce_ec2_profile" {
   }
 }
 
+# S3 Bucket for MapReduce Storage
+resource "aws_s3_bucket" "mapreduce_storage" {
+  bucket = var.s3_bucket_name
+
+  tags = {
+    Name        = "${var.project_name}-storage"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# S3 Bucket Versioning
+resource "aws_s3_bucket_versioning" "mapreduce_storage_versioning" {
+  bucket = aws_s3_bucket.mapreduce_storage.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# S3 Bucket Lifecycle Configuration
+resource "aws_s3_bucket_lifecycle_configuration" "mapreduce_storage_lifecycle" {
+  bucket = aws_s3_bucket.mapreduce_storage.id
+
+  rule {
+    id     = "mapreduce_lifecycle"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "GLACIER"
+    }
+
+    expiration {
+      days = 365
+    }
+  }
+}
+
+# S3 Bucket Server Side Encryption
+resource "aws_s3_bucket_server_side_encryption_configuration" "mapreduce_storage_encryption" {
+  bucket = aws_s3_bucket.mapreduce_storage.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# S3 Bucket Public Access Block
+resource "aws_s3_bucket_public_access_block" "mapreduce_storage_pab" {
+  bucket = aws_s3_bucket.mapreduce_storage.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Enhanced Load Balancer with Multiple Target Groups
+resource "aws_lb_target_group" "mapreduce_dashboard_tg" {
+  name     = "${var.project_name}-dashboard-tg"
+  port     = var.dashboard_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.mapreduce_vpc.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 5
+    interval            = 30
+    path                = "/health"
+    matcher             = "200"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+  }
+
+  tags = {
+    Name        = "${var.project_name}-dashboard-tg"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+resource "aws_lb_target_group" "mapreduce_master_tg" {
+  name     = "${var.project_name}-master-tg"
+  port     = var.master_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.mapreduce_vpc.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/health"
+    matcher             = "200"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+  }
+
+  tags = {
+    Name        = "${var.project_name}-master-tg"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+resource "aws_lb_target_group" "mapreduce_worker_tg" {
+  name     = "${var.project_name}-worker-tg"
+  port     = var.worker_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.mapreduce_vpc.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/health"
+    matcher             = "200"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+  }
+
+  tags = {
+    Name        = "${var.project_name}-worker-tg"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# Load Balancer Listeners with Path-based Routing
+resource "aws_lb_listener_rule" "mapreduce_dashboard_rule" {
+  listener_arn = aws_lb_listener.mapreduce_listener.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.mapreduce_dashboard_tg.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/dashboard*", "/health*", "/metrics*", "/jobs*", "/workers*", "/output*"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "mapreduce_master_rule" {
+  listener_arn = aws_lb_listener.mapreduce_listener.arn
+  priority     = 200
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.mapreduce_master_tg.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/master*", "/api/master*"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "mapreduce_worker_rule" {
+  listener_arn = aws_lb_listener.mapreduce_listener.arn
+  priority     = 300
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.mapreduce_worker_tg.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/worker*", "/api/worker*"]
+    }
+  }
+}
+
+# CloudWatch Alarms for Load Balancer
+resource "aws_cloudwatch_metric_alarm" "mapreduce_alb_high_latency" {
+  alarm_name          = "${var.project_name}-alb-high-latency"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "TargetResponseTime"
+  namespace           = "AWS/ApplicationELB"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "2"
+  alarm_description   = "This metric monitors alb response time"
+  alarm_actions       = [aws_sns_topic.mapreduce_alerts.arn]
+
+  dimensions = {
+    LoadBalancer = aws_lb.mapreduce_alb.arn_suffix
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "mapreduce_alb_high_5xx" {
+  alarm_name          = "${var.project_name}-alb-high-5xx"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "10"
+  alarm_description   = "This metric monitors alb 5xx errors"
+  alarm_actions       = [aws_sns_topic.mapreduce_alerts.arn]
+
+  dimensions = {
+    LoadBalancer = aws_lb.mapreduce_alb.arn_suffix
+  }
+}
+
+# SNS Topic for Alerts
+resource "aws_sns_topic" "mapreduce_alerts" {
+  name = "${var.project_name}-alerts"
+
+  tags = {
+    Name        = "${var.project_name}-alerts"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
 # Data source for Amazon Linux AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true

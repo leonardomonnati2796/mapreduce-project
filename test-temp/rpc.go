@@ -47,7 +47,14 @@ func getMasterRpcAddresses() []string {
 	return []string{defaultRpcPort1, defaultRpcPort2, defaultRpcPort3}
 }
 
-// TaskType è definito in constants.go
+type TaskType int
+
+const (
+	MapTask TaskType = iota
+	ReduceTask
+	NoTask
+	ExitTask
+)
 
 type Task struct {
 	Type    TaskType

@@ -22,31 +22,7 @@ import (
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 )
 
-const (
-	clusterManagementDelay  = 2 * time.Second
-	raftInitializationDelay = 2 * time.Second
-	taskTimeout             = 15 * time.Second
-	fileValidationInterval  = 10 * time.Second
-	clusterMonitorInterval  = 10 * time.Second
-	raftMonitorInterval     = 1 * time.Second
-	taskMonitorInterval     = 2 * time.Second
-)
-
-type JobPhase int
-
-const (
-	MapPhase JobPhase = iota
-	ReducePhase
-	DonePhase
-)
-
-type TaskState int
-
-const (
-	Idle TaskState = iota
-	InProgress
-	Completed
-)
+// Costanti e tipi ora definiti in constants.go
 
 type TaskInfo struct {
 	State     TaskState
@@ -94,24 +70,24 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 	defer m.mu.Unlock()
 
 	// Log del comando ricevuto per debugging
-	fmt.Printf("[Master] Apply comando: %s, TaskID: %d, Term: %d, Index: %d\n",
+	LogDebug("[Master] Apply comando: %s, TaskID: %d, Term: %d, Index: %d",
 		cmd.Operation, cmd.TaskID, logEntry.Term, logEntry.Index)
 
 	// Ignora comandi se il master non è ancora inizializzato
 	if m.inputFiles == nil || len(m.inputFiles) == 0 {
-		fmt.Printf("[Master] Ignoro comando %s durante inizializzazione (inputFiles=nil)\n", cmd.Operation)
+		LogDebug("[Master] Ignoro comando %s durante inizializzazione (inputFiles=nil)", cmd.Operation)
 		return nil
 	}
 
 	// Ignora comandi se non ci sono task configurati
 	if len(m.mapTasks) == 0 && len(m.reduceTasks) == 0 {
-		fmt.Printf("[Master] Ignoro comando %s durante inizializzazione (nessun task)\n", cmd.Operation)
+		LogDebug("[Master] Ignoro comando %s durante inizializzazione (nessun task)", cmd.Operation)
 		return nil
 	}
 
 	// Se il job è già completato, ignora tutti i comandi
 	if m.isDone {
-		fmt.Printf("[Master] Ignoro comando %s - job già completato\n", cmd.Operation)
+		LogDebug("[Master] Ignoro comando %s - job già completato", cmd.Operation)
 		return nil
 	}
 
@@ -121,11 +97,11 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 			if m.mapTasks[cmd.TaskID].State != Completed {
 				m.mapTasks[cmd.TaskID].State = Completed
 				m.mapTasksDone++
-				fmt.Printf("[Master] MapTask %d completato, progresso: %d/%d\n",
+				LogInfo("[Master] MapTask %d completato, progresso: %d/%d",
 					cmd.TaskID, m.mapTasksDone, len(m.mapTasks))
 				if m.mapTasksDone == len(m.mapTasks) {
 					m.phase = ReducePhase
-					fmt.Printf("[Master] Transizione a ReducePhase\n")
+					LogInfo("[Master] Transizione a ReducePhase")
 				}
 			}
 		} else {
@@ -135,12 +111,12 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 		// Gestisce l'aggiunta di un nuovo master al cluster
 		if cmd.RaftAddress != "" && cmd.RpcAddress != "" {
 			m.clusterMembers[cmd.RaftAddress] = cmd.RpcAddress
-			fmt.Printf("[Master] Nuovo master aggiunto al cluster: %s -> %s\n", cmd.RaftAddress, cmd.RpcAddress)
+			LogInfo("[Master] Nuovo master aggiunto al cluster: %s -> %s", cmd.RaftAddress, cmd.RpcAddress)
 
 			// Forza una nuova elezione del leader
 			go func() {
-				time.Sleep(clusterManagementDelay)
-				fmt.Printf("[Master] Forzando nuova elezione del leader dopo aggiunta master\n")
+				time.Sleep(ClusterManagementDelay)
+				LogInfo("[Master] Forzando nuova elezione del leader dopo aggiunta master")
 				// Il leader attuale può dimettersi per forzare una nuova elezione
 				if m.raft.State() == raft.Leader {
 					m.raft.LeadershipTransfer()
@@ -151,19 +127,19 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 		// Gestisce la rimozione di un master dal cluster
 		if cmd.RaftAddress != "" {
 			delete(m.clusterMembers, cmd.RaftAddress)
-			fmt.Printf("[Master] Master rimosso dal cluster: %s\n", cmd.RaftAddress)
+			LogInfo("[Master] Master rimosso dal cluster: %s", cmd.RaftAddress)
 		}
 	case "complete-reduce":
 		if cmd.TaskID >= 0 && cmd.TaskID < len(m.reduceTasks) {
 			if m.reduceTasks[cmd.TaskID].State != Completed {
 				m.reduceTasks[cmd.TaskID].State = Completed
 				m.reduceTasksDone++
-				fmt.Printf("[Master] ReduceTask %d completato, progresso: %d/%d\n",
+				LogInfo("[Master] ReduceTask %d completato, progresso: %d/%d",
 					cmd.TaskID, m.reduceTasksDone, len(m.reduceTasks))
 				if m.reduceTasksDone == len(m.reduceTasks) {
 					m.phase = DonePhase
 					m.isDone = true
-					fmt.Printf("[Master] Job completato - transizione a DonePhase\n")
+					LogInfo("[Master] Job completato - transizione a DonePhase")
 					// Copia i file di output dal volume Docker alla cartella locale
 					m.copyOutputFilesToLocal()
 					// Backup su S3 se abilitato
@@ -179,12 +155,12 @@ func (m *Master) Apply(logEntry *raft.Log) interface{} {
 			if m.phase == MapPhase && cmd.TaskID < len(m.mapTasks) {
 				if m.mapTasks[cmd.TaskID].State == InProgress {
 					m.mapTasks[cmd.TaskID].State = Idle
-					fmt.Printf("[Master] MapTask %d resettato a Idle per riassegnazione\n", cmd.TaskID)
+					LogInfo("[Master] MapTask %d resettato a Idle per riassegnazione", cmd.TaskID)
 				}
 			} else if m.phase == ReducePhase && cmd.TaskID < len(m.reduceTasks) {
 				if m.reduceTasks[cmd.TaskID].State == InProgress {
 					m.reduceTasks[cmd.TaskID].State = Idle
-					fmt.Printf("[Master] ReduceTask %d resettato a Idle per riassegnazione\n", cmd.TaskID)
+					LogInfo("[Master] ReduceTask %d resettato a Idle per riassegnazione", cmd.TaskID)
 				}
 			}
 		}
@@ -256,7 +232,7 @@ func (m *Master) Restore(rc io.ReadCloser) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	fmt.Printf("[Master] Restore chiamato: isDone=%v, phase=%v\n", state.IsDone, state.Phase)
+	LogInfo("[Master] Restore chiamato: isDone=%v, phase=%v", state.IsDone, state.Phase)
 	m.isDone = state.IsDone
 	m.phase = state.Phase
 	m.inputFiles = state.InputFiles
@@ -278,12 +254,12 @@ func (m *Master) isMapTaskCompleted(taskID int) bool {
 	for i := 0; i < m.nReduce; i++ {
 		fileName := getIntermediateFileName(taskID, i)
 		if _, err := os.Stat(fileName); os.IsNotExist(err) {
-			fmt.Printf("[Master] MapTask %d incompleto: file %s mancante\n", taskID, fileName)
+			LogDebug("[Master] MapTask %d incompleto: file %s mancante", taskID, fileName)
 			return false
 		}
 	}
 
-	fmt.Printf("[Master] MapTask %d completato: tutti i file intermedi presenti\n", taskID)
+	LogInfo("[Master] MapTask %d completato: tutti i file intermedi presenti", taskID)
 	return true
 }
 
@@ -308,7 +284,7 @@ func (m *Master) validateMapTaskOutput(taskID int) bool {
 		fileName := getIntermediateFileName(taskID, i)
 		file, err := os.Open(fileName)
 		if err != nil {
-			fmt.Printf("[Master] MapTask %d invalido: errore apertura file %s: %v\n", taskID, fileName, err)
+			LogError("[Master] MapTask %d invalido: errore apertura file %s: %v", taskID, fileName, err)
 			return false
 		}
 
@@ -318,7 +294,7 @@ func (m *Master) validateMapTaskOutput(taskID int) bool {
 		hasData := false
 		for decoder.More() {
 			if err := decoder.Decode(&kv); err != nil {
-				fmt.Printf("[Master] MapTask %d invalido: errore decodifica JSON in %s: %v\n", taskID, fileName, err)
+				LogError("[Master] MapTask %d invalido: errore decodifica JSON in %s: %v", taskID, fileName, err)
 				file.Close()
 				return false
 			}
@@ -327,12 +303,12 @@ func (m *Master) validateMapTaskOutput(taskID int) bool {
 		file.Close()
 
 		if !hasData {
-			fmt.Printf("[Master] MapTask %d invalido: file %s vuoto\n", taskID, fileName)
+			LogWarn("[Master] MapTask %d invalido: file %s vuoto", taskID, fileName)
 			return false
 		}
 	}
 
-	fmt.Printf("[Master] MapTask %d valido: tutti i file intermedi sono validi\n", taskID)
+	LogInfo("[Master] MapTask %d valido: tutti i file intermedi sono validi", taskID)
 	return true
 }
 
@@ -342,11 +318,11 @@ func (m *Master) cleanupInvalidMapTask(taskID int) {
 		return
 	}
 
-	fmt.Printf("[Master] Pulizia MapTask %d invalido\n", taskID)
+	LogInfo("[Master] Pulizia MapTask %d invalido", taskID)
 	for i := 0; i < m.nReduce; i++ {
 		fileName := getIntermediateFileName(taskID, i)
 		if err := os.Remove(fileName); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("[Master] Errore rimozione file %s: %v\n", fileName, err)
+			LogError("[Master] Errore rimozione file %s: %v", fileName, err)
 		}
 	}
 }
@@ -359,11 +335,11 @@ func (m *Master) isReduceTaskCompleted(taskID int) bool {
 
 	fileName := getOutputFileName(taskID)
 	if _, err := os.Stat(fileName); os.IsNotExist(err) {
-		fmt.Printf("[Master] ReduceTask %d incompleto: file %s mancante\n", taskID, fileName)
+		LogDebug("[Master] ReduceTask %d incompleto: file %s mancante", taskID, fileName)
 		return false
 	}
 
-	fmt.Printf("[Master] ReduceTask %d completato: file output presente\n", taskID)
+	LogInfo("[Master] ReduceTask %d completato: file output presente", taskID)
 	return true
 }
 
@@ -376,7 +352,7 @@ func (m *Master) validateReduceTaskOutput(taskID int) bool {
 	fileName := getOutputFileName(taskID)
 	file, err := os.Open(fileName)
 	if err != nil {
-		fmt.Printf("[Master] ReduceTask %d invalido: errore apertura file %s: %v\n", taskID, fileName, err)
+		LogError("[Master] ReduceTask %d invalido: errore apertura file %s: %v", taskID, fileName, err)
 		return false
 	}
 	defer file.Close()
@@ -394,16 +370,16 @@ func (m *Master) validateReduceTaskOutput(taskID int) bool {
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Printf("[Master] ReduceTask %d invalido: errore lettura file %s: %v\n", taskID, fileName, err)
+		LogError("[Master] ReduceTask %d invalido: errore lettura file %s: %v", taskID, fileName, err)
 		return false
 	}
 
 	if !hasData {
-		fmt.Printf("[Master] ReduceTask %d invalido: file %s vuoto\n", taskID, fileName)
+		LogWarn("[Master] ReduceTask %d invalido: file %s vuoto", taskID, fileName)
 		return false
 	}
 
-	fmt.Printf("[Master] ReduceTask %d valido: file %s contiene %d righe\n", taskID, fileName, lineCount)
+	LogInfo("[Master] ReduceTask %d valido: file %s contiene %d righe", taskID, fileName, lineCount)
 	return true
 }
 
@@ -413,58 +389,58 @@ func (m *Master) cleanupInvalidReduceTask(taskID int) {
 		return
 	}
 
-	fmt.Printf("[Master] Pulizia ReduceTask %d invalido\n", taskID)
+	LogInfo("[Master] Pulizia ReduceTask %d invalido", taskID)
 	fileName := getOutputFileName(taskID)
 	if err := os.Remove(fileName); err != nil && !os.IsNotExist(err) {
-		fmt.Printf("[Master] Errore rimozione file %s: %v\n", fileName, err)
+		LogError("[Master] Errore rimozione file %s: %v", fileName, err)
 	}
 }
 
 func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
-	fmt.Printf("[Master] AssignTask chiamato, stato Raft: %v, isDone: %v\n", m.raft.State(), m.isDone)
+	LogDebug("[Master] AssignTask chiamato, stato Raft: %v, isDone: %v", m.raft.State(), m.isDone)
 	if m.raft.State() != raft.Leader {
-		fmt.Printf("[Master] Non sono leader, restituisco NoTask\n")
+		LogDebug("[Master] Non sono leader, restituisco NoTask")
 		reply.Type = NoTask
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.isDone {
-		fmt.Printf("[Master] Job completato, restituisco ExitTask\n")
+		LogInfo("[Master] Job completato, restituisco ExitTask")
 		reply.Type = ExitTask
 		return nil
 	}
 	var taskToDo *Task
-	fmt.Printf("[Master] Fase corrente: %v, mapTasks: %d, reduceTasks: %d\n", m.phase, len(m.mapTasks), len(m.reduceTasks))
+	LogDebug("[Master] Fase corrente: %v, mapTasks: %d, reduceTasks: %d", m.phase, len(m.mapTasks), len(m.reduceTasks))
 	if m.phase == MapPhase {
 		for id, info := range m.mapTasks {
-			fmt.Printf("[Master] MapTask %d: stato=%v\n", id, info.State)
+			LogDebug("[Master] MapTask %d: stato=%v", id, info.State)
 			if info.State == Idle {
 				// Verifica se il MapTask è già stato completato (file intermedi esistenti)
 				if m.isMapTaskCompleted(id) {
-					fmt.Printf("[Master] MapTask %d già completato (file intermedi esistenti), marco come Completed\n", id)
+					LogInfo("[Master] MapTask %d già completato (file intermedi esistenti), marco come Completed", id)
 					m.mapTasks[id].State = Completed
 					m.mapTasksDone++
 					if m.mapTasksDone == len(m.mapTasks) {
 						m.phase = ReducePhase
-						fmt.Printf("[Master] Tutti i MapTask completati, transizione a ReducePhase\n")
+						LogInfo("[Master] Tutti i MapTask completati, transizione a ReducePhase")
 					}
 					continue
 				}
 				taskToDo = &Task{Type: MapTask, TaskID: id, Input: m.inputFiles[id], NReduce: m.nReduce}
 				m.mapTasks[id].State = InProgress
 				m.mapTasks[id].StartTime = time.Now()
-				fmt.Printf("[Master] Assegnato MapTask %d: %s\n", id, m.inputFiles[id])
+				LogInfo("[Master] Assegnato MapTask %d: %s", id, m.inputFiles[id])
 				break
 			} else if info.State == InProgress {
 				// Verifica se il task è effettivamente completato (file intermedi esistenti)
 				if m.isMapTaskCompleted(id) {
-					fmt.Printf("[Master] MapTask %d in InProgress ma file intermedi presenti, marco come Completed\n", id)
+					LogInfo("[Master] MapTask %d in InProgress ma file intermedi presenti, marco come Completed", id)
 					m.mapTasks[id].State = Completed
 					m.mapTasksDone++
 					if m.mapTasksDone == len(m.mapTasks) {
 						m.phase = ReducePhase
-						fmt.Printf("[Master] Tutti i MapTask completati, transizione a ReducePhase\n")
+						LogInfo("[Master] Tutti i MapTask completati, transizione a ReducePhase")
 					}
 					continue
 				}
@@ -473,19 +449,19 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 				taskToDo = &Task{Type: MapTask, TaskID: id, Input: m.inputFiles[id], NReduce: m.nReduce}
 				m.mapTasks[id].State = InProgress
 				m.mapTasks[id].StartTime = time.Now()
-				fmt.Printf("[Master] Riassegnato MapTask %d in InProgress: %s\n", id, m.inputFiles[id])
+				LogInfo("[Master] Riassegnato MapTask %d in InProgress: %s", id, m.inputFiles[id])
 				break
 			} else if info.State == Completed {
 				// Verifica se i file intermedi sono ancora validi
 				if !m.validateMapTaskOutput(id) {
-					fmt.Printf("[Master] MapTask %d marcato come Completed ma file intermedi invalidi, resetto a Idle\n", id)
+					LogWarn("[Master] MapTask %d marcato come Completed ma file intermedi invalidi, resetto a Idle", id)
 					m.mapTasks[id].State = Idle
 					m.mapTasksDone--
 					m.cleanupInvalidMapTask(id)
 					taskToDo = &Task{Type: MapTask, TaskID: id, Input: m.inputFiles[id], NReduce: m.nReduce}
 					m.mapTasks[id].State = InProgress
 					m.mapTasks[id].StartTime = time.Now()
-					fmt.Printf("[Master] Riassegnato MapTask %d: %s\n", id, m.inputFiles[id])
+					LogInfo("[Master] Riassegnato MapTask %d: %s", id, m.inputFiles[id])
 					break
 				}
 			}
@@ -503,28 +479,28 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 			if actualMapDone == len(m.mapTasks) {
 				m.mapTasksDone = actualMapDone
 				m.phase = ReducePhase
-				fmt.Printf("[Master] Tutti i MapTask completati (%d/%d), transizione a ReducePhase\n", actualMapDone, len(m.mapTasks))
+				LogInfo("[Master] Tutti i MapTask completati (%d/%d), transizione a ReducePhase", actualMapDone, len(m.mapTasks))
 			}
 		}
 	} else if m.phase == ReducePhase {
 		for id, info := range m.reduceTasks {
-			fmt.Printf("[Master] ReduceTask %d: stato=%v\n", id, info.State)
+			LogDebug("[Master] ReduceTask %d: stato=%v", id, info.State)
 			if info.State == Idle {
 				// Verifica se tutti i file intermedi necessari esistono
 				if !m.areAllMapTasksCompleted() {
-					fmt.Printf("[Master] ReduceTask %d non può essere assegnato: MapTask non completati\n", id)
+					LogDebug("[Master] ReduceTask %d non può essere assegnato: MapTask non completati", id)
 					continue
 				}
 
 				// Verifica se il ReduceTask è già stato completato (file di output esistente)
 				if m.isReduceTaskCompleted(id) {
-					fmt.Printf("[Master] ReduceTask %d già completato (file output esistente), marco come Completed\n", id)
+					LogInfo("[Master] ReduceTask %d già completato (file output esistente), marco come Completed", id)
 					m.reduceTasks[id].State = Completed
 					m.reduceTasksDone++
 					if m.reduceTasksDone == len(m.reduceTasks) {
 						m.phase = DonePhase
 						m.isDone = true
-						fmt.Printf("[Master] Tutti i ReduceTask completati, transizione a DonePhase\n")
+						LogInfo("[Master] Tutti i ReduceTask completati, transizione a DonePhase")
 					}
 					continue
 				}
@@ -532,19 +508,19 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 				taskToDo = &Task{Type: ReduceTask, TaskID: id, NMap: len(m.mapTasks)}
 				m.reduceTasks[id].State = InProgress
 				m.reduceTasks[id].StartTime = time.Now()
-				fmt.Printf("[Master] Assegnato ReduceTask %d\n", id)
+				LogInfo("[Master] Assegnato ReduceTask %d", id)
 				break
 			} else if info.State == Completed {
 				// Verifica se il file di output è ancora valido
 				if !m.validateReduceTaskOutput(id) {
-					fmt.Printf("[Master] ReduceTask %d marcato come Completed ma file output invalido, resetto a Idle\n", id)
+					LogWarn("[Master] ReduceTask %d marcato come Completed ma file output invalido, resetto a Idle", id)
 					m.reduceTasks[id].State = Idle
 					m.reduceTasksDone--
 					m.cleanupInvalidReduceTask(id)
 					taskToDo = &Task{Type: ReduceTask, TaskID: id, NMap: len(m.mapTasks)}
 					m.reduceTasks[id].State = InProgress
 					m.reduceTasks[id].StartTime = time.Now()
-					fmt.Printf("[Master] Riassegnato ReduceTask %d\n", id)
+					LogInfo("[Master] Riassegnato ReduceTask %d", id)
 					break
 				}
 			}
@@ -552,13 +528,13 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 	}
 	if taskToDo != nil {
 		*reply = *taskToDo
-		fmt.Printf("[Master] Restituisco task: %v\n", *taskToDo)
+		LogInfo("[Master] Restituisco task: %v", *taskToDo)
 
 		// Traccia il worker che ha richiesto il task usando l'ID fornito
 		workerID := strings.TrimSpace(args.WorkerID)
 		if workerID == "" {
 			// Nessun ID, non registrare un nuovo worker (evita duplicati fantasma)
-			fmt.Printf("[Master] RequestTask senza WorkerID: non registro worker, assegno comunque il task\n")
+			LogDebug("[Master] RequestTask senza WorkerID: non registro worker, assegno comunque il task")
 		}
 
 		if workerID != "" && !strings.HasPrefix(workerID, "worker-temp-") {
@@ -569,15 +545,15 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 					LastSeen:  time.Now(),
 					TasksDone: 0,
 				}
-				fmt.Printf("[Master] Nuovo worker registrato: %s\n", workerID)
+				LogInfo("[Master] Nuovo worker registrato: %s", workerID)
 			}
 			m.workerLastSeen[workerID] = time.Now()
 			m.workers[workerID].LastSeen = time.Now()
-			fmt.Printf("[Master] Worker %s tracciato, ultimo visto: %v\n", workerID, time.Now())
+			LogDebug("[Master] Worker %s tracciato, ultimo visto: %v", workerID, time.Now())
 		}
 	} else {
 		*reply = Task{Type: NoTask}
-		fmt.Printf("[Master] Nessun task disponibile, restituisco NoTask\n")
+		LogDebug("[Master] Nessun task disponibile, restituisco NoTask")
 	}
 	return nil
 }
@@ -586,7 +562,7 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 		return nil
 	}
 
-	fmt.Printf("[Master] TaskCompleted ricevuto: Type=%v, TaskID=%d\n", args.Type, args.TaskID)
+	LogInfo("[Master] TaskCompleted ricevuto: Type=%v, TaskID=%d", args.Type, args.TaskID)
 
 	// Validazione specifica per MapTask
 	if args.Type == MapTask {
@@ -601,7 +577,7 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 			return fmt.Errorf("MapTask %d file intermedi invalidi", args.TaskID)
 		}
 
-		fmt.Printf("[Master] MapTask %d completato e validato correttamente\n", args.TaskID)
+		LogInfo("[Master] MapTask %d completato e validato correttamente", args.TaskID)
 	} else if args.Type == ReduceTask {
 		if args.TaskID < 0 || args.TaskID >= len(m.reduceTasks) {
 			log.Printf("[Master] TaskID %d fuori range per ReduceTask\n", args.TaskID)
@@ -614,7 +590,7 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 			return fmt.Errorf("ReduceTask %d file output invalido", args.TaskID)
 		}
 
-		fmt.Printf("[Master] ReduceTask %d completato e validato correttamente\n", args.TaskID)
+		LogInfo("[Master] ReduceTask %d completato e validato correttamente", args.TaskID)
 	}
 
 	op := "complete-reduce"
@@ -635,19 +611,19 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 		return err
 	}
 
-	fmt.Printf("[Master] TaskCompleted applicato con successo: %s TaskID=%d\n", op, args.TaskID)
+	LogInfo("[Master] TaskCompleted applicato con successo: %s TaskID=%d", op, args.TaskID)
 
 	// Aggiorna il conteggio dei task completati solo per il worker specifico
 	if args.WorkerID != "" {
 		if worker, exists := m.workers[args.WorkerID]; exists {
 			worker.TasksDone++
 			worker.LastSeen = time.Now()
-			fmt.Printf("[Master] Worker %s ha completato il task, totale task completati: %d\n", args.WorkerID, worker.TasksDone)
+			LogInfo("[Master] Worker %s ha completato il task, totale task completati: %d", args.WorkerID, worker.TasksDone)
 		} else {
-			fmt.Printf("[Master] Worker %s non trovato nella mappa dei worker\n", args.WorkerID)
+			LogWarn("[Master] Worker %s non trovato nella mappa dei worker", args.WorkerID)
 		}
 	} else {
-		fmt.Printf("[Master] Worker ID non fornito nel TaskCompleted\n")
+		LogWarn("[Master] Worker ID non fornito nel TaskCompleted")
 	}
 
 	return nil
@@ -667,8 +643,8 @@ func (m *Master) RecoveryState() {
 		return
 	}
 
-	fmt.Printf("[Master] RecoveryState: verifico stato dopo elezione leader\n")
-	fmt.Printf("[Master] Stato corrente: isDone=%v, phase=%v, mapTasksDone=%d/%d, reduceTasksDone=%d/%d\n",
+	LogInfo("[Master] RecoveryState: verifico stato dopo elezione leader")
+	LogInfo("[Master] Stato corrente: isDone=%v, phase=%v, mapTasksDone=%d/%d, reduceTasksDone=%d/%d",
 		m.isDone, m.phase, m.mapTasksDone, len(m.mapTasks), m.reduceTasksDone, len(m.reduceTasks))
 
 	// Verifica consistenza dello stato e recovery completo
@@ -682,33 +658,33 @@ func (m *Master) RecoveryState() {
 					actualMapDone++
 				} else {
 					// File corrotti o mancanti, reset del task
-					fmt.Printf("[Master] RecoveryState: MapTask %d file corrotti, resetto a Idle\n", i)
+					LogWarn("[Master] RecoveryState: MapTask %d file corrotti, resetto a Idle", i)
 					m.mapTasks[i].State = Idle
 					m.cleanupInvalidMapTask(i)
 				}
 			} else if task.State == InProgress {
 				// Verifica se il task è effettivamente completato
 				if m.isMapTaskCompleted(i) && m.validateMapTaskOutput(i) {
-					fmt.Printf("[Master] RecoveryState: MapTask %d completato ma marcato InProgress, correggo\n", i)
+					LogInfo("[Master] RecoveryState: MapTask %d completato ma marcato InProgress, correggo", i)
 					m.mapTasks[i].State = Completed
 					actualMapDone++
 				} else {
 					// Task bloccato, reset
-					fmt.Printf("[Master] RecoveryState: MapTask %d bloccato, resetto a Idle\n", i)
+					LogWarn("[Master] RecoveryState: MapTask %d bloccato, resetto a Idle", i)
 					m.mapTasks[i].State = Idle
 				}
 			}
 		}
 
 		if actualMapDone != m.mapTasksDone {
-			fmt.Printf("[Master] Correzione mapTasksDone: %d -> %d\n", m.mapTasksDone, actualMapDone)
+			LogInfo("[Master] Correzione mapTasksDone: %d -> %d", m.mapTasksDone, actualMapDone)
 			m.mapTasksDone = actualMapDone
 		}
 
 		// Se tutti i MapTask sono completati, passa a ReducePhase
 		if m.mapTasksDone == len(m.mapTasks) && m.phase == MapPhase {
 			m.phase = ReducePhase
-			fmt.Printf("[Master] RecoveryState: transizione a ReducePhase\n")
+			LogInfo("[Master] RecoveryState: transizione a ReducePhase")
 		}
 	} else if m.phase == ReducePhase {
 		// Conta i ReduceTask effettivamente completati verificando i file
@@ -720,26 +696,26 @@ func (m *Master) RecoveryState() {
 					actualReduceDone++
 				} else {
 					// File corrotti o mancanti, reset del task
-					fmt.Printf("[Master] RecoveryState: ReduceTask %d file corrotti, resetto a Idle\n", i)
+					LogWarn("[Master] RecoveryState: ReduceTask %d file corrotti, resetto a Idle", i)
 					m.reduceTasks[i].State = Idle
 					m.cleanupInvalidReduceTask(i)
 				}
 			} else if task.State == InProgress {
 				// Verifica se il task è effettivamente completato
 				if m.isReduceTaskCompleted(i) && m.validateReduceTaskOutput(i) {
-					fmt.Printf("[Master] RecoveryState: ReduceTask %d completato ma marcato InProgress, correggo\n", i)
+					LogInfo("[Master] RecoveryState: ReduceTask %d completato ma marcato InProgress, correggo", i)
 					m.reduceTasks[i].State = Completed
 					actualReduceDone++
 				} else {
 					// Task bloccato, reset
-					fmt.Printf("[Master] RecoveryState: ReduceTask %d bloccato, resetto a Idle\n", i)
+					LogWarn("[Master] RecoveryState: ReduceTask %d bloccato, resetto a Idle", i)
 					m.reduceTasks[i].State = Idle
 				}
 			}
 		}
 
 		if actualReduceDone != m.reduceTasksDone {
-			fmt.Printf("[Master] Correzione reduceTasksDone: %d -> %d\n", m.reduceTasksDone, actualReduceDone)
+			LogInfo("[Master] Correzione reduceTasksDone: %d -> %d", m.reduceTasksDone, actualReduceDone)
 			m.reduceTasksDone = actualReduceDone
 		}
 
@@ -747,11 +723,11 @@ func (m *Master) RecoveryState() {
 		if m.reduceTasksDone == len(m.reduceTasks) && m.phase == ReducePhase {
 			m.phase = DonePhase
 			m.isDone = true
-			fmt.Printf("[Master] RecoveryState: transizione a DonePhase\n")
+			LogInfo("[Master] RecoveryState: transizione a DonePhase")
 		}
 	}
 
-	fmt.Printf("[Master] RecoveryState completato: isDone=%v, phase=%v\n", m.isDone, m.phase)
+	LogInfo("[Master] RecoveryState completato: isDone=%v, phase=%v", m.isDone, m.phase)
 }
 func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddrs []string) (*Master, error) {
 	// Inizializza il generatore di numeri casuali per il delay
@@ -779,7 +755,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 			m.clusterMembers[raftAddr] = rpcAddrs[i]
 		}
 	}
-	fmt.Printf("[Master %d] Inizializzazione: isDone=%v, phase=%v\n", me, m.isDone, m.phase)
+	LogInfo("[Master %d] Inizializzazione: isDone=%v, phase=%v", me, m.isDone, m.phase)
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(raftAddrs[me])
 	config.Logger = hclog.New(&hclog.LoggerOptions{Name: fmt.Sprintf("Raft-%s", raftAddrs[me]), Level: hclog.Info, Output: os.Stderr})
@@ -792,7 +768,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	config.HeartbeatTimeout = 200 * time.Millisecond
 	config.LeaderLeaseTimeout = 150 * time.Millisecond // Deve essere < HeartbeatTimeout
 
-	fmt.Printf("[Master %d] Configurazione Raft: ElectionTimeout=%v, HeartbeatTimeout=%v\n",
+	LogInfo("[Master %d] Configurazione Raft: ElectionTimeout=%v, HeartbeatTimeout=%v",
 		me, config.ElectionTimeout, config.HeartbeatTimeout)
 	raftAddr := raftAddrs[me]
 	advertiseAddr, _ := net.ResolveTCPAddr("tcp", raftAddr)
@@ -804,13 +780,13 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 
 	// Opzione per pulizia manuale (solo se esplicitamente richiesta)
 	if os.Getenv("RAFT_CLEAN_START") == "true" {
-		fmt.Printf("[Master %d] Pulizia dati Raft richiesta esplicitamente\n", me)
+		LogInfo("[Master %d] Pulizia dati Raft richiesta esplicitamente", me)
 		os.RemoveAll(raftDir)
 	}
 
 	// Crea la directory Raft se non esiste (mantiene i dati esistenti per fault tolerance)
 	os.MkdirAll(raftDir, 0700)
-	fmt.Printf("[Master %d] Directory Raft preparata: %s\n", me, raftDir)
+	LogInfo("[Master %d] Directory Raft preparata: %s", me, raftDir)
 
 	// Reset esplicito dello stato PRIMA della creazione di Raft
 	m.mu.Lock()
@@ -826,7 +802,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 		m.reduceTasks[i] = TaskInfo{State: Idle}
 	}
 	m.mu.Unlock()
-	fmt.Printf("[Master %d] Reset stato PRIMA di Raft: isDone=%v, phase=%v\n", me, m.isDone, m.phase)
+	LogInfo("[Master %d] Reset stato PRIMA di Raft: isDone=%v, phase=%v", me, m.isDone, m.phase)
 	logStore, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(raftDir, "log.db")})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log store: %s", err)
@@ -844,47 +820,47 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 		return nil, fmt.Errorf("raft: %s", err)
 	}
 	m.raft = ra
-	fmt.Printf("[Master %d] Dopo creazione Raft: isDone=%v, phase=%v\n", me, m.isDone, m.phase)
+	LogInfo("[Master %d] Dopo creazione Raft: isDone=%v, phase=%v", me, m.isDone, m.phase)
 
 	// Verifica che i file Raft siano stati creati correttamente
 	logPath := filepath.Join(raftDir, "log.db")
 	stablePath := filepath.Join(raftDir, "stable.db")
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		fmt.Printf("[Master %d] ATTENZIONE: File log.db non creato in %s\n", me, logPath)
+		LogWarn("[Master %d] ATTENZIONE: File log.db non creato in %s", me, logPath)
 	} else {
-		fmt.Printf("[Master %d] File log.db creato correttamente in %s\n", me, logPath)
+		LogInfo("[Master %d] File log.db creato correttamente in %s", me, logPath)
 	}
 	if _, err := os.Stat(stablePath); os.IsNotExist(err) {
-		fmt.Printf("[Master %d] ATTENZIONE: File stable.db non creato in %s\n", me, stablePath)
+		LogWarn("[Master %d] ATTENZIONE: File stable.db non creato in %s", me, stablePath)
 	} else {
-		fmt.Printf("[Master %d] File stable.db creato correttamente in %s\n", me, stablePath)
+		LogInfo("[Master %d] File stable.db creato correttamente in %s", me, stablePath)
 	}
 
 	// Aspetta che Raft si stabilizzi prima di procedere
-	time.Sleep(raftInitializationDelay)
+	time.Sleep(RaftInitializationDelay)
 
 	// Monitor dello stato Raft per recovery automatico
 	go func() {
-		ticker := time.NewTicker(raftMonitorInterval)
+		ticker := time.NewTicker(RaftMonitorInterval)
 		defer ticker.Stop()
 		var lastState raft.RaftState
 
 		for range ticker.C {
 			currentState := m.raft.State()
 			if currentState != lastState {
-				fmt.Printf("[Master %d] Cambio stato Raft: %v -> %v\n", me, lastState, currentState)
+				LogInfo("[Master %d] Cambio stato Raft: %v -> %v", me, lastState, currentState)
 				lastState = currentState
 
 				// Se diventa leader, esegui recovery dello stato
 				if currentState == raft.Leader {
-					fmt.Printf("[Master %d] Diventato leader, eseguo recovery dello stato\n", me)
+					LogInfo("[Master %d] Diventato leader, eseguo recovery dello stato", me)
 					m.RecoveryState()
 				}
 			}
 		}
 	}()
 
-	fmt.Printf("[Master %d] Stato finale dopo inizializzazione: isDone=%v, phase=%v, mapTasks=%d, reduceTasks=%d\n",
+	LogInfo("[Master %d] Stato finale dopo inizializzazione: isDone=%v, phase=%v, mapTasks=%d, reduceTasks=%d",
 		me, m.isDone, m.phase, len(m.mapTasks), len(m.reduceTasks))
 
 	// Avvia il monitor per la gestione dinamica del cluster
@@ -906,15 +882,15 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 				servers[i] = raft.Server{ID: raft.ServerID(addrStr), Address: raft.ServerAddress(addrStr)}
 			}
 
-			fmt.Printf("[Master %d] Tentativo bootstrap con delay %v\n", me, randomDelay)
+			LogInfo("[Master %d] Tentativo bootstrap con delay %v", me, randomDelay)
 			bootstrapFuture := m.raft.BootstrapCluster(raft.Configuration{Servers: servers})
 			if err := bootstrapFuture.Error(); err != nil {
 				log.Printf("[Master %d] Bootstrap fallito (probabilmente già configurato): %s", me, err)
 			} else {
-				fmt.Printf("[Master %d] Bootstrap completato con successo\n", me)
+				LogInfo("[Master %d] Bootstrap completato con successo", me)
 			}
 		} else {
-			fmt.Printf("[Master %d] Cluster già configurato, salto bootstrap\n", me)
+			LogInfo("[Master %d] Cluster già configurato, salto bootstrap", me)
 		}
 	}()
 	rpc.Register(m)
@@ -931,17 +907,17 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 				listenAddr = "0.0.0.0" + listenAddr
 			}
 		}
-		fmt.Printf("[Master %d] Starting RPC server on %s\n", me, listenAddr)
+		LogInfo("[Master %d] Starting RPC server on %s", me, listenAddr)
 		l, e := net.Listen("tcp", listenAddr)
 		if e != nil {
-			fmt.Printf("RPC listen error: %s\n", e)
+			LogError("RPC listen error: %s", e)
 			return
 		}
 		http.Serve(l, nil)
 	}()
 	// Task timeout monitor: re-queue stuck tasks if the leader does not receive completion in time.
 	go func() {
-		ticker := time.NewTicker(taskMonitorInterval)
+		ticker := time.NewTicker(TaskMonitorInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			if m.raft.State() != raft.Leader {
@@ -951,10 +927,10 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 			m.mu.Lock()
 			if m.phase == MapPhase {
 				for i, info := range m.mapTasks {
-					if info.State == InProgress && now.Sub(info.StartTime) > taskTimeout {
+					if info.State == InProgress && now.Sub(info.StartTime) > TaskTimeout {
 						// Reset task e logga il comando per recovery
 						m.mapTasks[i] = TaskInfo{State: Idle}
-						fmt.Printf("[Master] MapTask %d timeout, resettato a Idle\n", i)
+						LogWarn("[Master] MapTask %d timeout, resettato a Idle", i)
 
 						// Applica il reset tramite Raft per consistency
 						cmd := LogCommand{Operation: "reset-task", TaskID: i}
@@ -966,10 +942,10 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 				}
 			} else if m.phase == ReducePhase {
 				for i, info := range m.reduceTasks {
-					if info.State == InProgress && now.Sub(info.StartTime) > taskTimeout {
+					if info.State == InProgress && now.Sub(info.StartTime) > TaskTimeout {
 						// Reset task e logga il comando per recovery
 						m.reduceTasks[i] = TaskInfo{State: Idle}
-						fmt.Printf("[Master] ReduceTask %d timeout, resettato a Idle\n", i)
+						LogWarn("[Master] ReduceTask %d timeout, resettato a Idle", i)
 
 						// Applica il reset tramite Raft per consistency
 						cmd := LogCommand{Operation: "reset-task", TaskID: i}
@@ -986,7 +962,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 
 	// File validation monitor: verifica periodicamente la validità dei file intermedi e di output
 	go func() {
-		ticker := time.NewTicker(fileValidationInterval)
+		ticker := time.NewTicker(FileValidationInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			if m.raft.State() != raft.Leader {
@@ -999,7 +975,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 					if info.State == Completed {
 						// Verifica periodicamente che i file intermedi siano ancora validi
 						if !m.validateMapTaskOutput(i) {
-							fmt.Printf("[Master] MapTask %d file intermedi corrotti, resetto a Idle\n", i)
+							LogWarn("[Master] MapTask %d file intermedi corrotti, resetto a Idle", i)
 							m.mapTasks[i].State = Idle
 							m.mapTasksDone--
 							m.cleanupInvalidMapTask(i)
@@ -1011,7 +987,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 					if info.State == Completed {
 						// Verifica periodicamente che i file di output siano ancora validi
 						if !m.validateReduceTaskOutput(i) {
-							fmt.Printf("[Master] ReduceTask %d file output corrotti, resetto a Idle\n", i)
+							LogWarn("[Master] ReduceTask %d file output corrotti, resetto a Idle", i)
 							m.reduceTasks[i].State = Idle
 							m.reduceTasksDone--
 							m.cleanupInvalidReduceTask(i)
@@ -1046,7 +1022,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 
 			// Reset task assegnati a worker morti
 			for _, workerID := range deadWorkers {
-				fmt.Printf("[Master] Worker %s considerato morto, resetto i suoi task\n", workerID)
+				LogWarn("[Master] Worker %s considerato morto, resetto i suoi task", workerID)
 
 				// Rimuovi il worker dalla mappa
 				delete(m.workers, workerID)
@@ -1057,7 +1033,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 				if m.phase == MapPhase {
 					for i, info := range m.mapTasks {
 						if info.State == InProgress && now.Sub(info.StartTime) > workerTimeout {
-							fmt.Printf("[Master] Reset MapTask %d per worker morto %s\n", i, workerID)
+							LogWarn("[Master] Reset MapTask %d per worker morto %s", i, workerID)
 							m.mapTasks[i].State = Idle
 
 							// Applica il reset tramite Raft per consistency
@@ -1071,7 +1047,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 				} else if m.phase == ReducePhase {
 					for i, info := range m.reduceTasks {
 						if info.State == InProgress && now.Sub(info.StartTime) > workerTimeout {
-							fmt.Printf("[Master] Reset ReduceTask %d per worker morto %s\n", i, workerID)
+							LogWarn("[Master] Reset ReduceTask %d per worker morto %s", i, workerID)
 							m.reduceTasks[i].State = Idle
 
 							// Applica il reset tramite Raft per consistency
@@ -1121,7 +1097,7 @@ func (m *Master) SubmitJob(args *SubmitJobArgs, reply *SubmitJobReply) error {
 		return fmt.Errorf("non sono il leader, non posso accettare job")
 	}
 
-	fmt.Printf("[Master] SubmitJob ricevuto: %d file, %d reducer\n", len(args.InputFiles), args.NReduce)
+	LogInfo("[Master] SubmitJob ricevuto: %d file, %d reducer", len(args.InputFiles), args.NReduce)
 
 	// Genera un JobID univoco
 	jobID := fmt.Sprintf("job-%d", time.Now().Unix())
@@ -1139,7 +1115,7 @@ func (m *Master) SubmitJob(args *SubmitJobArgs, reply *SubmitJobReply) error {
 
 	// Reset dello stato se necessario
 	if m.isDone || m.phase == DonePhase {
-		fmt.Printf("[Master] Reset dello stato per nuovo job %s\n", jobID)
+		LogInfo("[Master] Reset dello stato per nuovo job %s", jobID)
 		m.isDone = false
 		m.phase = MapPhase
 		m.mapTasksDone = 0
@@ -1162,7 +1138,7 @@ func (m *Master) SubmitJob(args *SubmitJobArgs, reply *SubmitJobReply) error {
 		m.reduceTasks[i].State = Idle
 	}
 
-	fmt.Printf("[Master] Job %s configurato: %d map tasks, %d reduce tasks\n",
+	LogInfo("[Master] Job %s configurato: %d map tasks, %d reduce tasks",
 		jobID, len(m.mapTasks), len(m.reduceTasks))
 
 	*reply = SubmitJobReply{
@@ -1175,12 +1151,12 @@ func (m *Master) SubmitJob(args *SubmitJobArgs, reply *SubmitJobReply) error {
 
 // copyOutputFilesToLocal copia i file di output dal volume Docker alla cartella locale data/output/
 func (m *Master) copyOutputFilesToLocal() {
-	fmt.Println("[Master] Avvio copia file di output nella cartella locale...")
+	LogInfo("[Master] Avvio copia file di output nella cartella locale...")
 
 	// Crea la cartella data/output se non esiste
 	localOutputDir := "data/output"
 	if err := os.MkdirAll(localOutputDir, 0755); err != nil {
-		fmt.Printf("[Master] Errore creazione cartella %s: %v\n", localOutputDir, err)
+		LogError("[Master] Errore creazione cartella %s: %v", localOutputDir, err)
 		return
 	}
 
@@ -1191,19 +1167,19 @@ func (m *Master) copyOutputFilesToLocal() {
 
 		// Verifica che il file sorgente esista
 		if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
-			fmt.Printf("[Master] File di output %s non trovato, salto\n", sourceFile)
+			LogWarn("[Master] File di output %s non trovato, salto", sourceFile)
 			continue
 		}
 
 		// Copia il file
 		if err := m.copyFile(sourceFile, destFile); err != nil {
-			fmt.Printf("[Master] Errore copia file %s -> %s: %v\n", sourceFile, destFile, err)
+			LogError("[Master] Errore copia file %s -> %s: %v", sourceFile, destFile, err)
 		} else {
-			fmt.Printf("[Master] File copiato: %s -> %s\n", sourceFile, destFile)
+			LogInfo("[Master] File copiato: %s -> %s", sourceFile, destFile)
 		}
 	}
 
-	fmt.Printf("[Master] Copia file di output completata in %s\n", localOutputDir)
+	LogInfo("[Master] Copia file di output completata in %s", localOutputDir)
 
 	// Crea anche il file finale unificato
 	m.createUnifiedOutputFile()
@@ -1232,12 +1208,12 @@ func (m *Master) copyFile(source, destination string) error {
 
 // createUnifiedOutputFile crea un file finale unificato che combina tutti i file di output
 func (m *Master) createUnifiedOutputFile() {
-	fmt.Println("[Master] Creazione file finale unificato...")
+	LogInfo("[Master] Creazione file finale unificato...")
 
 	// Crea la cartella data/output se non esiste
 	localOutputDir := "data/output"
 	if err := os.MkdirAll(localOutputDir, 0755); err != nil {
-		fmt.Printf("[Master] Errore creazione cartella %s: %v\n", localOutputDir, err)
+		LogError("[Master] Errore creazione cartella %s: %v", localOutputDir, err)
 		return
 	}
 
@@ -1247,7 +1223,7 @@ func (m *Master) createUnifiedOutputFile() {
 	// Apri il file finale per scrittura
 	finalFile, err := os.Create(unifiedFile)
 	if err != nil {
-		fmt.Printf("[Master] Errore creazione file finale %s: %v\n", unifiedFile, err)
+		LogError("[Master] Errore creazione file finale %s: %v", unifiedFile, err)
 		return
 	}
 	defer finalFile.Close()
@@ -1265,14 +1241,14 @@ func (m *Master) createUnifiedOutputFile() {
 
 		// Verifica che il file sorgente esista
 		if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
-			fmt.Printf("[Master] File di output %s non trovato, salto\n", sourceFile)
+			LogWarn("[Master] File di output %s non trovato, salto", sourceFile)
 			continue
 		}
 
 		// Leggi il file di output
 		file, err := os.Open(sourceFile)
 		if err != nil {
-			fmt.Printf("[Master] Errore apertura file %s: %v\n", sourceFile, err)
+			LogError("[Master] Errore apertura file %s: %v", sourceFile, err)
 			continue
 		}
 
@@ -1298,12 +1274,12 @@ func (m *Master) createUnifiedOutputFile() {
 	fmt.Fprintf(finalFile, "TOTALE RECORD PROCESSATI: %d\n", totalRecords)
 	fmt.Fprintf(finalFile, "=====================================\n")
 
-	fmt.Printf("[Master] File finale unificato creato: %s (%d record totali)\n", unifiedFile, totalRecords)
+	LogInfo("[Master] File finale unificato creato: %s (%d record totali)", unifiedFile, totalRecords)
 }
 
 // createUnifiedOutputFileInDocker crea un file finale unificato nel volume Docker
 func (m *Master) createUnifiedOutputFileInDocker() {
-	fmt.Println("[Master] Creazione file finale unificato nel volume Docker...")
+	LogInfo("[Master] Creazione file finale unificato nel volume Docker...")
 
 	// File finale nel volume Docker
 	basePath := os.Getenv("TMP_PATH")
@@ -1315,7 +1291,7 @@ func (m *Master) createUnifiedOutputFileInDocker() {
 	// Apri il file finale per scrittura
 	finalFile, err := os.Create(unifiedFile)
 	if err != nil {
-		fmt.Printf("[Master] Errore creazione file finale Docker %s: %v\n", unifiedFile, err)
+		LogError("[Master] Errore creazione file finale Docker %s: %v", unifiedFile, err)
 		return
 	}
 	defer finalFile.Close()
@@ -1333,14 +1309,14 @@ func (m *Master) createUnifiedOutputFileInDocker() {
 
 		// Verifica che il file sorgente esista
 		if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
-			fmt.Printf("[Master] File di output %s non trovato, salto\n", sourceFile)
+			LogWarn("[Master] File di output %s non trovato, salto", sourceFile)
 			continue
 		}
 
 		// Leggi il file di output
 		file, err := os.Open(sourceFile)
 		if err != nil {
-			fmt.Printf("[Master] Errore apertura file %s: %v\n", sourceFile, err)
+			LogError("[Master] Errore apertura file %s: %v", sourceFile, err)
 			continue
 		}
 
@@ -1366,49 +1342,49 @@ func (m *Master) createUnifiedOutputFileInDocker() {
 	fmt.Fprintf(finalFile, "TOTALE RECORD PROCESSATI: %d\n", totalRecords)
 	fmt.Fprintf(finalFile, "=====================================\n")
 
-	fmt.Printf("[Master] File finale unificato Docker creato: %s (%d record totali)\n", unifiedFile, totalRecords)
+	LogInfo("[Master] File finale unificato Docker creato: %s (%d record totali)", unifiedFile, totalRecords)
 }
 
 // backupToS3 esegue un backup su S3 se abilitato
 func (m *Master) backupToS3() {
 	if os.Getenv("S3_SYNC_ENABLED") != "true" {
-		fmt.Println("[Master] S3 sync non abilitato, salto backup")
+		LogInfo("[Master] S3 sync non abilitato, salto backup")
 		return
 	}
 
-	fmt.Println("[Master] Iniziando backup su S3...")
+	LogInfo("[Master] Iniziando backup su S3...")
 
 	s3Config := GetS3ConfigFromEnv()
 	if s3Client, err := NewS3Client(s3Config); err != nil {
-		fmt.Printf("[Master] Errore creazione client S3: %v\n", err)
+		LogError("[Master] Errore creazione client S3: %v", err)
 		return
 	} else {
 		// Backup dei file di output
 		if err := s3Client.SyncDirectory("/tmp/mapreduce/output", "output/"); err != nil {
-			fmt.Printf("[Master] Errore backup output su S3: %v\n", err)
+			LogError("[Master] Errore backup output su S3: %v", err)
 		} else {
-			fmt.Println("[Master] Backup output su S3 completato")
+			LogInfo("[Master] Backup output su S3 completato")
 		}
 
 		// Backup dei file intermedi
 		if err := s3Client.SyncDirectory("/tmp/mapreduce/intermediate", "intermediate/"); err != nil {
-			fmt.Printf("[Master] Errore backup intermediate su S3: %v\n", err)
+			LogError("[Master] Errore backup intermediate su S3: %v", err)
 		} else {
-			fmt.Println("[Master] Backup intermediate su S3 completato")
+			LogInfo("[Master] Backup intermediate su S3 completato")
 		}
 
 		// Backup completo con timestamp
 		if err := s3Client.BackupToS3("/tmp/mapreduce"); err != nil {
-			fmt.Printf("[Master] Errore backup completo su S3: %v\n", err)
+			LogError("[Master] Errore backup completo su S3: %v", err)
 		} else {
-			fmt.Println("[Master] Backup completo su S3 completato")
+			LogInfo("[Master] Backup completo su S3 completato")
 		}
 	}
 }
 
 // startClusterManagementMonitor avvia il monitor per la gestione dinamica del cluster
 func (m *Master) startClusterManagementMonitor() {
-	ticker := time.NewTicker(clusterMonitorInterval)
+	ticker := time.NewTicker(ClusterMonitorInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -1426,12 +1402,12 @@ func (m *Master) monitorClusterHealth() {
 	// Verifica la configurazione attuale del cluster Raft
 	config := m.raft.GetConfiguration()
 	if config.Error() != nil {
-		fmt.Printf("[Master] Errore ottenendo configurazione cluster: %v\n", config.Error())
+		LogError("[Master] Errore ottenendo configurazione cluster: %v", config.Error())
 		return
 	}
 
 	currentServers := config.Configuration().Servers
-	fmt.Printf("[Master] Cluster attuale ha %d server\n", len(currentServers))
+	LogInfo("[Master] Cluster attuale ha %d server", len(currentServers))
 
 	// Verifica se ci sono server da aggiungere
 	for raftAddr, rpcAddr := range m.clusterMembers {
@@ -1444,12 +1420,12 @@ func (m *Master) monitorClusterHealth() {
 		}
 
 		if !found {
-			fmt.Printf("[Master] Aggiungendo server %s (RPC: %s) al cluster Raft\n", raftAddr, rpcAddr)
+			LogInfo("[Master] Aggiungendo server %s (RPC: %s) al cluster Raft", raftAddr, rpcAddr)
 			future := m.raft.AddVoter(raft.ServerID(raftAddr), raft.ServerAddress(raftAddr), 0, 0)
 			if err := future.Error(); err != nil {
-				fmt.Printf("[Master] Errore aggiungendo server %s: %v\n", raftAddr, err)
+				LogError("[Master] Errore aggiungendo server %s: %v", raftAddr, err)
 			} else {
-				fmt.Printf("[Master] Server %s aggiunto con successo\n", raftAddr)
+				LogInfo("[Master] Server %s aggiunto con successo", raftAddr)
 			}
 		}
 	}
@@ -1483,7 +1459,7 @@ func (m *Master) AddClusterMember(raftAddr, rpcAddr string) error {
 		return fmt.Errorf("errore applicando comando: %v", err)
 	}
 
-	fmt.Printf("[Master] Comando add-master applicato con successo\n")
+	LogInfo("[Master] Comando add-master applicato con successo")
 	return nil
 }
 
@@ -1514,7 +1490,7 @@ func (m *Master) RemoveClusterMember(raftAddr string) error {
 		return fmt.Errorf("errore applicando comando: %v", err)
 	}
 
-	fmt.Printf("[Master] Comando remove-master applicato con successo\n")
+	LogInfo("[Master] Comando remove-master applicato con successo")
 	return nil
 }
 
@@ -1533,7 +1509,7 @@ func (m *Master) GetMasterInfo(args *GetMasterInfoArgs, reply *MasterInfoReply) 
 	reply.LeaderAddress = string(leaderAddr)
 	// clusterMembers è una map[string]string, convertiamo in slice di int
 	reply.ClusterMembers = make([]int, 0, len(m.clusterMembers))
-	for _, _ = range m.clusterMembers {
+	for range m.clusterMembers {
 		reply.ClusterMembers = append(reply.ClusterMembers, len(reply.ClusterMembers))
 	}
 	reply.RaftAddrs = append([]string(nil), m.raftAddrs...)
@@ -1619,7 +1595,7 @@ func (m *Master) ForceLeaderElection() error {
 
 	// Altrimenti, forziamo un'elezione
 	// Questo può essere fatto riavviando il leader attuale
-	fmt.Printf("[Master] Forzando nuova elezione del leader\n")
+	LogInfo("[Master] Forzando nuova elezione del leader")
 	return nil
 }
 
@@ -1627,24 +1603,24 @@ func (m *Master) ForceLeaderElection() error {
 func (m *Master) LeadershipTransfer(args *LeadershipTransferArgs, reply *LeadershipTransferReply) error {
 	if m.raft.State() == raft.Leader {
 		// Se siamo già leader, trasferiamo la leadership
-		fmt.Printf("[Master %d] Iniziando trasferimento leadership...\n", m.myID)
+		LogInfo("[Master %d] Iniziando trasferimento leadership...", m.myID)
 		future := m.raft.LeadershipTransfer()
 		err := future.Error()
 		if err != nil {
-			fmt.Printf("[Master %d] Errore trasferimento leadership: %v\n", m.myID, err)
+			LogError("[Master %d] Errore trasferimento leadership: %v", m.myID, err)
 			reply.Success = false
 			reply.Message = fmt.Sprintf("Failed to transfer leadership: %v", err)
 			return nil
 		}
 
-		fmt.Printf("[Master %d] Leadership transfer avviato con successo\n", m.myID)
+		LogInfo("[Master %d] Leadership transfer avviato con successo", m.myID)
 		reply.Success = true
 		reply.Message = "Leadership transfer initiated successfully"
 		return nil
 	}
 
 	// Altrimenti, forziamo un'elezione
-	fmt.Printf("[Master %d] Non sono il leader (stato: %s), non posso trasferire la leadership\n", m.myID, m.raft.State())
+	LogWarn("[Master %d] Non sono il leader (stato: %s), non posso trasferire la leadership", m.myID, m.raft.State())
 	reply.Success = false
 	reply.Message = "Non sono il leader, non posso trasferire la leadership"
 	return nil
@@ -1683,7 +1659,7 @@ func (m *Master) WorkerHeartbeat(args *WorkerHeartbeatArgs, reply *WorkerHeartbe
 			LastSeen:  now,
 			TasksDone: 0,
 		}
-		fmt.Printf("[Master] Nuovo worker registrato: %s\n", workerID)
+		LogInfo("[Master] Nuovo worker registrato: %s", workerID)
 	}
 
 	reply.Success = true

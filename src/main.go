@@ -11,44 +11,37 @@ import (
 	"github.com/hashicorp/raft"
 )
 
-const (
-	// Timeouts and intervals
-	raftStabilizationDelay = 10 * time.Second
-	mainLoopTimeout        = 5 * time.Minute
-	tickerInterval         = 2 * time.Second
-	leaderElectionDelay    = 2 * time.Second
-	// nReduce is now calculated dynamically based on worker count
-	// Minimum arguments required
-	minMasterArgs = 4
-	minWorkerArgs = 2
-)
+// Costanti ora definite in constants.go
 
 // main è il punto di ingresso principale del programma MapReduce
 // Gestisce l'avvio del master o del worker in base agli argomenti della riga di comando
 func main() {
-	if len(os.Args) < minWorkerArgs {
+	if len(os.Args) < MinWorkerArgs {
 		usage()
 	}
 
 	// Inizializza la configurazione
 	configPath := os.Getenv("MAPREDUCE_CONFIG")
 	if err := InitConfig(configPath); err != nil {
-		fmt.Printf("Warning: Failed to load config: %v, using defaults\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: Failed to load config: %v, using defaults\n", err)
+	}
+
+	// Inizializza il logger
+	logLevel := getLogLevelFromEnv()
+	logFile := os.Getenv("LOG_FILE")
+	if err := InitLogger(logLevel, logFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to initialize logger: %v\n", err)
 	}
 
 	// Inizializza S3 se abilitato
 	if os.Getenv("S3_SYNC_ENABLED") == "true" {
 		s3Config := GetS3ConfigFromEnv()
-		if _, err := NewS3Client(s3Config); err == nil {
-			fmt.Printf("S3 client inizializzato: bucket=%s, region=%s\n", s3Config.Bucket, s3Config.Region)
+		if s3Manager, err := NewS3StorageManager(s3Config); err == nil {
+			LogInfo("S3 storage manager inizializzato: bucket=%s, region=%s", s3Config.Bucket, s3Config.Region)
 			// Avvia il servizio di sincronizzazione in background
-			go func() {
-				if syncService, err := NewS3SyncService(s3Config); err == nil {
-					syncService.Start()
-				}
-			}()
+			go s3Manager.Start()
 		} else {
-			fmt.Printf("Warning: Failed to initialize S3 client: %v\n", err)
+			LogWarn("Failed to initialize S3 storage manager: %v", err)
 		}
 	}
 
@@ -71,8 +64,8 @@ func main() {
 // runMaster avvia il processo master con i parametri specificati
 // Argomenti richiesti: master ID, lista file di input separati da virgola
 func runMaster() {
-	if len(os.Args) < minMasterArgs {
-		fmt.Fprintf(os.Stderr, "Master requires at least %d arguments\n", minMasterArgs)
+	if len(os.Args) < MinMasterArgs {
+		fmt.Fprintf(os.Stderr, "Master requires at least %d arguments\n", MinMasterArgs)
 		usage()
 	}
 
@@ -98,16 +91,16 @@ func runMaster() {
 
 	// Calculate dynamic reducer count based on worker count
 	nReduce := calculateDynamicReducerCount()
-	fmt.Printf("Numero di reducer calcolato dinamicamente: %d\n", nReduce)
+	LogInfo("Numero di reducer calcolato dinamicamente: %d", nReduce)
 
-	fmt.Printf("Avvio come master %d...\n", me)
+	LogInfo("Avvio come master %d...", me)
 	m, err := MakeMaster(files, nReduce, me, raftAddrs, rpcAddrs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create master: %v\n", err)
+		LogError("Failed to create master: %v", err)
 		return
 	}
 
-	fmt.Printf("[Master %d] Dopo MakeMaster, isDone=%v\n", me, m.Done())
+	LogInfo("[Master %d] Dopo MakeMaster, isDone=%v", me, m.Done())
 
 	// Avvia il server di health check per questo master
 	// Usa porte separate per health check: 8100, 8101, 8102
@@ -115,9 +108,9 @@ func runMaster() {
 	healthChecker := NewHealthChecker("1.0.0")
 
 	go func() {
-		fmt.Printf("[Master %d] Avvio health check server sulla porta %d\n", me, healthPort)
+		LogInfo("[Master %d] Avvio health check server sulla porta %d", me, healthPort)
 		if err := StartHealthCheckServer(healthPort, healthChecker); err != nil {
-			fmt.Printf("[Master %d] Errore health check server: %v\n", me, err)
+			LogError("[Master %d] Errore health check server: %v", me, err)
 		}
 	}()
 
@@ -125,31 +118,31 @@ func runMaster() {
 	go RunHealthChecks(healthChecker)
 
 	// Aspetta che i worker si connettano e che Raft si stabilizzi
-	time.Sleep(raftStabilizationDelay)
+	time.Sleep(RaftStabilizationDelay)
 
-	fmt.Printf("[Master %d] Inizio loop principale, isDone=%v\n", me, m.Done())
+	LogInfo("[Master %d] Inizio loop principale, isDone=%v", me, m.Done())
 
 	// Loop principale con timeout
-	timeout := time.After(mainLoopTimeout)
-	ticker := time.NewTicker(tickerInterval)
+	timeout := time.After(MainLoopTimeout)
+	ticker := time.NewTicker(TickerInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-timeout:
-			fmt.Printf("[Master %d] Timeout raggiunto, esco\n", me)
+			LogWarn("[Master %d] Timeout raggiunto, esco", me)
 			return
 		case <-ticker.C:
 			if m.Done() {
-				fmt.Printf("[Master %d] Job completato, rimango attivo per nuovi job...\n", me)
+				LogInfo("[Master %d] Job completato, rimango attivo per nuovi job...", me)
 				// Non esco dal loop, rimango attivo per gestire nuovi job
 				continue
 			}
 			if m.raft == nil || m.raft.State() != raft.Leader {
-				fmt.Printf("[Master %d] Non sono leader, aspetto...\n", me)
+				LogDebug("[Master %d] Non sono leader, aspetto...", me)
 				continue
 			}
-			fmt.Printf("[Master %d] Sono leader, aspetto task...\n", me)
+			LogDebug("[Master %d] Sono leader, aspetto task...", me)
 		}
 	}
 }
@@ -160,10 +153,10 @@ func runWorker() {
 	// Inizializza la configurazione globale per leggere le variabili d'ambiente
 	configPath := os.Getenv("MAPREDUCE_CONFIG")
 	if err := InitConfig(configPath); err != nil {
-		fmt.Printf("Warning: Failed to load config: %v, using defaults\n", err)
+		LogWarn("Failed to load config: %v, using defaults", err)
 	}
 
-	fmt.Println("Avvio come worker...")
+	LogInfo("Avvio come worker...")
 	Worker(Map, Reduce)
 }
 
@@ -172,7 +165,7 @@ func runDashboard() {
 	// Inizializza la configurazione globale per leggere le variabili d'ambiente
 	configPath := os.Getenv("MAPREDUCE_CONFIG")
 	if err := InitConfig(configPath); err != nil {
-		fmt.Printf("Warning: Failed to load config: %v, using defaults\n", err)
+		LogWarn("Failed to load config: %v, using defaults", err)
 	}
 
 	// Ottieni la configurazione globale o usa quella di default
@@ -196,7 +189,7 @@ func runDashboard() {
 		}
 	}
 
-	fmt.Printf("Starting MapReduce Dashboard on port %d...\n", port)
+	LogInfo("Starting MapReduce Dashboard on port %d...", port)
 
 	// Create health checker
 	healthChecker := NewHealthChecker("1.0.0")
@@ -220,13 +213,13 @@ func runDashboard() {
 
 // runLeaderElection forza l'elezione di un nuovo leader master
 func runLeaderElection() {
-	fmt.Println("=== LEADER ELECTION ===")
-	fmt.Println("Forzando l'elezione di un nuovo leader master...")
+	LogInfo("=== LEADER ELECTION ===")
+	LogInfo("Forzando l'elezione di un nuovo leader master...")
 
 	// Ottieni la configurazione
 	config := GetConfig()
 	if config == nil {
-		fmt.Fprintf(os.Stderr, "Configuration not initialized\n")
+		LogError("Configuration not initialized")
 		return
 	}
 
@@ -234,13 +227,13 @@ func runLeaderElection() {
 	raftAddrs := getMasterRaftAddresses()
 	rpcAddrs := getMasterRpcAddresses()
 
-	fmt.Printf("Master disponibili: %d\n", len(raftAddrs))
+	LogInfo("Master disponibili: %d", len(raftAddrs))
 	for i, addr := range raftAddrs {
-		fmt.Printf("  Master %d: %s (RPC: %s)\n", i, addr, rpcAddrs[i])
+		LogInfo("  Master %d: %s (RPC: %s)", i, addr, rpcAddrs[i])
 	}
 
 	// Simula l'elezione del leader
-	fmt.Println("\nIniziando elezione leader...")
+	LogInfo("Iniziando elezione leader...")
 
 	// Trova un master candidato (escludi il leader attuale se possibile)
 	candidateID := 0
@@ -248,32 +241,32 @@ func runLeaderElection() {
 		candidateID = 1 // Usa il secondo master come candidato
 	}
 
-	fmt.Printf("Candidato leader: Master %d\n", candidateID)
+	LogInfo("Candidato leader: Master %d", candidateID)
 
 	// Simula il processo di elezione
-	fmt.Println("Invio richiesta di elezione...")
-	time.Sleep(leaderElectionDelay)
+	LogInfo("Invio richiesta di elezione...")
+	time.Sleep(LeaderElectionDelay)
 
-	fmt.Println("Raccolta voti dai follower...")
-	time.Sleep(leaderElectionDelay)
+	LogInfo("Raccolta voti dai follower...")
+	time.Sleep(LeaderElectionDelay)
 
-	fmt.Println("Verifica maggioranza...")
-	time.Sleep(leaderElectionDelay / 2)
+	LogInfo("Verifica maggioranza...")
+	time.Sleep(LeaderElectionDelay / 2)
 
-	fmt.Printf("✓ Nuovo leader eletto: Master %d\n", candidateID)
-	fmt.Printf("✓ Leader election completata con successo!\n")
+	LogInfo("✓ Nuovo leader eletto: Master %d", candidateID)
+	LogInfo("✓ Leader election completata con successo!")
 
 	// Mostra lo stato finale
-	fmt.Println("\n=== STATO FINALE ===")
+	LogInfo("=== STATO FINALE ===")
 	for i := 0; i < len(raftAddrs); i++ {
 		status := "Follower"
 		if i == candidateID {
 			status = "Leader"
 		}
-		fmt.Printf("Master %d: %s\n", i, status)
+		LogInfo("Master %d: %s", i, status)
 	}
 
-	fmt.Println("\nLeader election completata!")
+	LogInfo("Leader election completata!")
 }
 
 // calculateDynamicReducerCount calculates the number of reducers based on worker count
@@ -282,7 +275,7 @@ func calculateDynamicReducerCount() int {
 	workerCountStr := os.Getenv("WORKER_COUNT")
 	if workerCountStr != "" {
 		if count, err := strconv.Atoi(workerCountStr); err == nil && count > 0 {
-			fmt.Printf("Numero di worker da variabile d'ambiente WORKER_COUNT: %d\n", count)
+			LogInfo("Numero di worker da variabile d'ambiente WORKER_COUNT: %d", count)
 			return count
 		}
 	}
@@ -293,20 +286,20 @@ func calculateDynamicReducerCount() int {
 		// Try to get worker count from any available master
 		for _, addr := range rpcAddrs {
 			if workerCount := queryWorkerCountFromMaster(addr); workerCount > 0 {
-				fmt.Printf("Numero di worker rilevato dal master %s: %d\n", addr, workerCount)
+				LogInfo("Numero di worker rilevato dal master %s: %d", addr, workerCount)
 				return workerCount
 			}
 		}
 
 		// If no master is available yet, estimate based on configuration
 		estimatedWorkers := len(rpcAddrs) // 1 worker per master as default
-		fmt.Printf("Numero di worker stimato da configurazione master: %d\n", estimatedWorkers)
+		LogInfo("Numero di worker stimato da configurazione master: %d", estimatedWorkers)
 		return estimatedWorkers
 	}
 
 	// Fallback: default to 3 workers (typical docker-compose setup)
 	defaultWorkerCount := 3
-	fmt.Printf("Usando numero di worker di default: %d\n", defaultWorkerCount)
+	LogInfo("Usando numero di worker di default: %d", defaultWorkerCount)
 	return defaultWorkerCount
 }
 
@@ -330,6 +323,23 @@ func queryWorkerCountFromMaster(masterAddr string) int {
 		return reply.ActiveWorkers
 	}
 	return 0
+}
+
+// getLogLevelFromEnv ottiene il livello di log dalle variabili d'ambiente
+func getLogLevelFromEnv() LogLevel {
+	levelStr := os.Getenv("LOG_LEVEL")
+	switch strings.ToUpper(levelStr) {
+	case "DEBUG":
+		return DEBUG
+	case "INFO":
+		return INFO
+	case "WARN":
+		return WARN
+	case "ERROR":
+		return ERROR
+	default:
+		return INFO
+	}
 }
 
 // usage stampa le istruzioni di utilizzo del programma e termina con codice di errore

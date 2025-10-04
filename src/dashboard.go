@@ -51,6 +51,9 @@ type Dashboard struct {
 	clients      map[*websocket.Conn]bool
 	clientsMutex sync.RWMutex
 	broadcast    chan []byte
+	// Load balancer support
+	loadBalancer *LoadBalancer
+	s3Manager    *S3StorageManager
 }
 
 // DashboardData contiene i dati per il dashboard
@@ -128,6 +131,24 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		broadcast: make(chan []byte),
 	}
 
+	// Inizializza load balancer se abilitato
+	if os.Getenv("LOAD_BALANCER_ENABLED") == "true" {
+		servers := d.initializeLoadBalancerServers()
+		d.loadBalancer = NewLoadBalancer(servers, HealthBased)
+		LogInfo("Load balancer inizializzato con %d server", len(servers))
+	}
+
+	// Inizializza S3 manager se abilitato
+	if os.Getenv("S3_SYNC_ENABLED") == "true" {
+		s3Config := GetS3ConfigFromEnv()
+		if s3Manager, err := NewS3StorageManager(s3Config); err == nil {
+			d.s3Manager = s3Manager
+			LogInfo("S3 storage manager inizializzato")
+		} else {
+			LogWarn("Failed to initialize S3 manager: %v", err)
+		}
+	}
+
 	d.setupRoutes()
 	go d.handleWebSocketMessages()
 	go d.startRealTimeUpdates()
@@ -172,6 +193,17 @@ func (d *Dashboard) setupRoutes() {
 
 		// Text processing endpoints
 		api.POST("/text/process", d.processText)
+
+		// Load balancer endpoints
+		api.GET("/loadbalancer/stats", d.getLoadBalancerStatsEndpoint)
+		api.POST("/loadbalancer/server/add", d.addLoadBalancerServer)
+		api.POST("/loadbalancer/server/remove", d.removeLoadBalancerServer)
+
+		// S3 storage endpoints
+		api.GET("/s3/stats", d.getS3StatsEndpoint)
+		api.POST("/s3/backup", d.createS3Backup)
+		api.GET("/s3/backups", d.listS3Backups)
+		api.POST("/s3/restore", d.restoreFromS3Backup)
 	}
 
 	// WebSocket endpoint
@@ -417,7 +449,7 @@ func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 	rpcAddrs := getMasterRpcAddresses()
 
 	// Debug: stampa gli indirizzi RPC che stiamo usando
-	fmt.Printf("[Dashboard] Getting worker data from masters: %v\n", rpcAddrs)
+	LogInfo("[Dashboard] Getting worker data from masters: %v", rpcAddrs)
 
 	// Trova prima il leader master
 	var leaderAddr string
@@ -426,7 +458,7 @@ func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 	for i, rpcAddr := range rpcAddrs {
 		client, err := rpc.DialHTTP("tcp", rpcAddr)
 		if err != nil {
-			fmt.Printf("[Dashboard] Failed to connect to master %d at %s: %v\n", i, rpcAddr, err)
+			LogWarn("[Dashboard] Failed to connect to master %d at %s: %v", i, rpcAddr, err)
 			continue
 		}
 
@@ -438,21 +470,21 @@ func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 		if err == nil && reply.IsLeader {
 			leaderAddr = rpcAddr
 			leaderID = i
-			fmt.Printf("[Dashboard] Found leader master %d at %s\n", i, rpcAddr)
+			LogInfo("[Dashboard] Found leader master %d at %s", i, rpcAddr)
 			break
 		}
 	}
 
 	// Se non troviamo il leader, interroga tutti i master come fallback
 	if leaderAddr == "" {
-		fmt.Printf("[Dashboard] No leader found, using fallback approach\n")
+		LogWarn("[Dashboard] No leader found, using fallback approach")
 		return d.getWorkersDataFromAllMasters(rpcAddrs)
 	}
 
 	// Interroga solo il leader per ottenere le informazioni sui worker
 	workerInfo, err := d.queryWorkerInfo(leaderID, leaderAddr)
 	if err != nil {
-		fmt.Printf("[Dashboard] Failed to get worker info from leader master %d at %s: %v\n", leaderID, leaderAddr, err)
+		LogError("[Dashboard] Failed to get worker info from leader master %d at %s: %v", leaderID, leaderAddr, err)
 		return d.getWorkersDataFromAllMasters(rpcAddrs)
 	}
 
@@ -469,11 +501,11 @@ func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 
 	// Se non ci sono worker reali, restituisce lista vuota (no fallback workers)
 	if len(allWorkers) == 0 {
-		fmt.Printf("[Dashboard] No workers found from leader master\n")
+		LogWarn("[Dashboard] No workers found from leader master")
 		return []WorkerInfoDashboard{}, nil
 	}
 
-	fmt.Printf("[Dashboard] Found %d workers from leader master\n", len(allWorkers))
+	LogInfo("[Dashboard] Found %d workers from leader master", len(allWorkers))
 	return allWorkers, nil
 }
 
@@ -486,7 +518,7 @@ func (d *Dashboard) getWorkersDataFromAllMasters(rpcAddrs []string) ([]WorkerInf
 	for i, rpcAddr := range rpcAddrs {
 		workerInfo, err := d.queryWorkerInfo(i, rpcAddr)
 		if err != nil {
-			fmt.Printf("[Dashboard] Failed to get worker info from master %d at %s: %v\n", i, rpcAddr, err)
+			LogWarn("[Dashboard] Failed to get worker info from master %d at %s: %v", i, rpcAddr, err)
 			continue
 		}
 
@@ -520,11 +552,11 @@ func (d *Dashboard) getWorkersDataFromAllMasters(rpcAddrs []string) ([]WorkerInf
 
 	// Se non ci sono worker reali, restituisce lista vuota (no fallback workers)
 	if len(allWorkers) == 0 {
-		fmt.Printf("[Dashboard] No workers found from any master\n")
+		LogWarn("[Dashboard] No workers found from any master")
 		return []WorkerInfoDashboard{}, nil
 	}
 
-	fmt.Printf("[Dashboard] Found %d unique workers from all masters\n", len(allWorkers))
+	LogInfo("[Dashboard] Found %d unique workers from all masters", len(allWorkers))
 	return allWorkers, nil
 }
 
@@ -534,7 +566,7 @@ func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
 	rpcAddrs := getMasterRpcAddresses()
 
 	// Debug: stampa gli indirizzi RPC che stiamo usando
-	fmt.Printf("[Dashboard] Using RPC addresses: %v\n", rpcAddrs)
+	LogInfo("[Dashboard] Using RPC addresses: %v", rpcAddrs)
 
 	var masters []MasterInfo
 
@@ -573,12 +605,12 @@ func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
 // queryWorkerInfo interroga un master specifico per ottenere le informazioni sui worker
 func (d *Dashboard) queryWorkerInfo(masterID int, rpcAddr string) (WorkerInfoReply, error) {
 	// Debug: stampa l'indirizzo che stiamo tentando di contattare
-	fmt.Printf("[Dashboard] Attempting to get worker info from master %d at %s\n", masterID, rpcAddr)
+	LogInfo("[Dashboard] Attempting to get worker info from master %d at %s", masterID, rpcAddr)
 
 	// Crea una connessione RPC al master
 	client, err := rpc.DialHTTP("tcp", rpcAddr)
 	if err != nil {
-		fmt.Printf("[Dashboard] Failed to connect to master %d at %s: %v\n", masterID, rpcAddr, err)
+		LogWarn("[Dashboard] Failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
 		return WorkerInfoReply{}, fmt.Errorf("failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
 	}
 	defer client.Close()
@@ -602,19 +634,19 @@ func (d *Dashboard) queryWorkerInfo(masterID int, rpcAddr string) (WorkerInfoRep
 		return WorkerInfoReply{}, fmt.Errorf("RPC call timeout")
 	}
 
-	fmt.Printf("[Dashboard] Got worker info from master %d: %d workers\n", masterID, len(reply.Workers))
+	LogInfo("[Dashboard] Got worker info from master %d: %d workers", masterID, len(reply.Workers))
 	return reply, nil
 }
 
 // queryMasterInfo interroga un master specifico per ottenere le sue informazioni
 func (d *Dashboard) queryMasterInfo(masterID int, rpcAddr string) (MasterInfo, error) {
 	// Debug: stampa l'indirizzo che stiamo tentando di contattare
-	fmt.Printf("[Dashboard] Attempting to connect to master %d at %s\n", masterID, rpcAddr)
+	LogInfo("[Dashboard] Attempting to connect to master %d at %s", masterID, rpcAddr)
 
 	// Crea una connessione RPC al master
 	client, err := rpc.DialHTTP("tcp", rpcAddr)
 	if err != nil {
-		fmt.Printf("[Dashboard] Failed to connect to master %d at %s: %v\n", masterID, rpcAddr, err)
+		LogWarn("[Dashboard] Failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
 		return MasterInfo{}, fmt.Errorf("failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
 	}
 	defer client.Close()
@@ -1042,8 +1074,8 @@ func (d *Dashboard) restartCluster(c *gin.Context) {
 
 // electLeader forza l'elezione di un nuovo leader master
 func (d *Dashboard) electLeader(c *gin.Context) {
-	fmt.Println("=== LEADER ELECTION TRIGGERED ===")
-	fmt.Println("Forzando l'elezione di un nuovo leader master...")
+	LogInfo("=== LEADER ELECTION TRIGGERED ===")
+	LogInfo("Forzando l'elezione di un nuovo leader master...")
 
 	// Ottieni la configurazione
 	config := d.config
@@ -1060,9 +1092,9 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 	raftAddrs := getMasterRaftAddresses()
 	rpcAddrs := getMasterRpcAddresses()
 
-	fmt.Printf("Master disponibili: %d\n", len(raftAddrs))
+	LogInfo("Master disponibili: %d", len(raftAddrs))
 	for i, addr := range raftAddrs {
-		fmt.Printf("  Master %d: %s (RPC: %s)\n", i, addr, rpcAddrs[i])
+		LogInfo("  Master %d: %s (RPC: %s)", i, addr, rpcAddrs[i])
 	}
 
 	// Trova il leader attuale
@@ -1082,7 +1114,7 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 		if err == nil && reply.IsLeader {
 			currentLeaderID = i
 			currentLeaderAddr = rpcAddr
-			fmt.Printf("Leader attuale trovato: Master %d (%s)\n", i, rpcAddr)
+			LogInfo("Leader attuale trovato: Master %d (%s)", i, rpcAddr)
 			break
 		}
 	}
@@ -1099,7 +1131,7 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 	// Trova un candidato per la leadership (il prossimo master nella lista)
 	newLeaderID := (currentLeaderID + 1) % len(rpcAddrs)
 
-	fmt.Printf("Trasferendo leadership da Master %d a Master %d...\n", currentLeaderID, newLeaderID)
+	LogInfo("Trasferendo leadership da Master %d a Master %d...", currentLeaderID, newLeaderID)
 
 	// Prova a trasferire la leadership al nuovo master
 	client, err := rpc.DialHTTP("tcp", currentLeaderAddr)
@@ -1118,7 +1150,7 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 	client.Close()
 
 	if err != nil {
-		fmt.Printf("Errore trasferimento leadership: %v\n", err)
+		LogError("Errore trasferimento leadership: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": fmt.Sprintf("Failed to transfer leadership: %v", err),
@@ -1127,8 +1159,8 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("✓ Leadership transfer avviato con successo!\n")
-	fmt.Printf("✓ Nuovo leader dovrebbe essere: Master %d\n", newLeaderID)
+	LogInfo("✓ Leadership transfer avviato con successo!")
+	LogInfo("✓ Nuovo leader dovrebbe essere: Master %d", newLeaderID)
 
 	// Aspetta un momento per permettere il trasferimento
 	time.Sleep(2 * time.Second)
@@ -1148,7 +1180,7 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 
 		if err == nil && reply.IsLeader {
 			actualNewLeaderID = i
-			fmt.Printf("Nuovo leader confermato: Master %d (%s)\n", i, rpcAddr)
+			LogInfo("Nuovo leader confermato: Master %d (%s)", i, rpcAddr)
 			break
 		}
 	}
@@ -1443,7 +1475,7 @@ func (d *Dashboard) generateMapReduceOutput(jobID, inputFile string, nReduce int
 	// Leggi il file di input
 	content, err := os.ReadFile(inputFile)
 	if err != nil {
-		fmt.Printf("Error reading input file: %v\n", err)
+		LogError("Error reading input file: %v", err)
 		return
 	}
 
@@ -1461,7 +1493,7 @@ func (d *Dashboard) generateMapReduceOutput(jobID, inputFile string, nReduce int
 
 	// Assicurati che la directory di output esista
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		fmt.Printf("Error creating output directory: %v\n", err)
+		LogError("Error creating output directory: %v", err)
 		return
 	}
 
@@ -1484,7 +1516,7 @@ func (d *Dashboard) generateMapReduceOutput(jobID, inputFile string, nReduce int
 		// Scrivi il file di output
 		outputContent := strings.Join(taskWords, "\n")
 		if err := os.WriteFile(outputFile, []byte(outputContent), 0644); err != nil {
-			fmt.Printf("Error writing output file %s: %v\n", outputFile, err)
+			LogError("Error writing output file %s: %v", outputFile, err)
 			continue
 		}
 
@@ -1494,7 +1526,7 @@ func (d *Dashboard) generateMapReduceOutput(jobID, inputFile string, nReduce int
 	// Pulisci il file di input temporaneo
 	os.Remove(inputFile)
 
-	fmt.Printf("Generated %d output files for job %s\n", len(outputFiles), jobID)
+	LogInfo("Generated %d output files for job %s", len(outputFiles), jobID)
 }
 
 // hash function per distribuire le parole tra i reduce tasks
@@ -1571,13 +1603,13 @@ func (d *Dashboard) getOutputPath() string {
 func (d *Dashboard) executeDockerManagerCommand(action string) (string, error) {
 	// Usa lo script bash per gestire Docker dal sistema host
 	scriptPath := "/root/scripts/docker-manager.sh"
-	
+
 	// Verifica se lo script esiste
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		// Fallback: usa comandi Docker diretti (potrebbe non funzionare nel container)
 		return d.executeDockerCommandDirect(action)
 	}
-	
+
 	// Usa bash per eseguire lo script
 	cmd := exec.Command("bash", scriptPath, action)
 	output, err := cmd.CombinedOutput()
@@ -1590,7 +1622,7 @@ func (d *Dashboard) executeDockerManagerCommand(action string) (string, error) {
 // executeDockerCommandDirect esegue comandi Docker direttamente (fallback)
 func (d *Dashboard) executeDockerCommandDirect(action string) (string, error) {
 	var cmd *exec.Cmd
-	
+
 	switch action {
 	case "add-master":
 		// Trova il prossimo ID master disponibile
@@ -1611,19 +1643,19 @@ func (d *Dashboard) executeDockerCommandDirect(action string) (string, error) {
 		if stopErr != nil {
 			return string(stopOutput), fmt.Errorf("failed to stop cluster: %v, output: %s", stopErr, string(stopOutput))
 		}
-		
+
 		// Poi riavvia
 		startCmd := exec.Command("docker", "compose", "-f", "docker/docker-compose.yml", "up", "-d")
 		startOutput, startErr := startCmd.CombinedOutput()
 		if startErr != nil {
 			return string(startOutput), fmt.Errorf("failed to start cluster: %v, output: %s", startErr, string(startOutput))
 		}
-		
+
 		return fmt.Sprintf("Cluster restarted successfully. Stop output: %s\nStart output: %s", string(stopOutput), string(startOutput)), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("command failed: %v, output: %s", err, string(output))
@@ -1829,7 +1861,7 @@ func (d *Dashboard) getExistingRPCAddresses() string {
 func (d *Dashboard) handleWebSocket(c *gin.Context) {
 	conn, err := d.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		fmt.Printf("WebSocket upgrade failed: %v\n", err)
+		LogError("WebSocket upgrade failed: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -1839,7 +1871,7 @@ func (d *Dashboard) handleWebSocket(c *gin.Context) {
 	d.clients[conn] = true
 	d.clientsMutex.Unlock()
 
-	fmt.Printf("WebSocket client connected. Total clients: %d\n", len(d.clients))
+	LogInfo("WebSocket client connected. Total clients: %d", len(d.clients))
 
 	// Invia dati iniziali
 	d.sendInitialData(conn)
@@ -1849,7 +1881,7 @@ func (d *Dashboard) handleWebSocket(c *gin.Context) {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Printf("WebSocket error: %v\n", err)
+				LogError("WebSocket error: %v", err)
 			}
 			break
 		}
@@ -1859,7 +1891,7 @@ func (d *Dashboard) handleWebSocket(c *gin.Context) {
 	d.clientsMutex.Lock()
 	delete(d.clients, conn)
 	d.clientsMutex.Unlock()
-	fmt.Printf("WebSocket client disconnected. Total clients: %d\n", len(d.clients))
+	LogInfo("WebSocket client disconnected. Total clients: %d", len(d.clients))
 }
 
 // sendInitialData invia i dati iniziali al client WebSocket
@@ -1874,7 +1906,7 @@ func (d *Dashboard) sendInitialData(conn *websocket.Conn) {
 	}
 
 	if err := conn.WriteJSON(updateData); err != nil {
-		fmt.Printf("Error sending initial data: %v\n", err)
+		LogError("Error sending initial data: %v", err)
 	}
 }
 
@@ -1887,7 +1919,7 @@ func (d *Dashboard) handleWebSocketMessages() {
 			for client := range d.clients {
 				err := client.WriteMessage(websocket.TextMessage, message)
 				if err != nil {
-					fmt.Printf("Error broadcasting message: %v\n", err)
+					LogError("Error broadcasting message: %v", err)
 					client.Close()
 					delete(d.clients, client)
 				}
@@ -1939,7 +1971,7 @@ func (d *Dashboard) broadcastUpdate() {
 	// Converte in JSON
 	jsonData, err := json.Marshal(updateData)
 	if err != nil {
-		fmt.Printf("Error marshaling update data: %v\n", err)
+		LogError("Error marshaling update data: %v", err)
 		return
 	}
 
@@ -1961,7 +1993,7 @@ func (d *Dashboard) broadcastCustomUpdate(updateType string, data interface{}) {
 
 	jsonData, err := json.Marshal(updateData)
 	if err != nil {
-		fmt.Printf("Error marshaling custom update: %v\n", err)
+		LogError("Error marshaling custom update: %v", err)
 		return
 	}
 
@@ -1970,4 +2002,254 @@ func (d *Dashboard) broadcastCustomUpdate(updateType string, data interface{}) {
 	default:
 		// Se il canale è pieno, salta questo aggiornamento
 	}
+}
+
+// initializeLoadBalancerServers inizializza i server per il load balancer
+func (d *Dashboard) initializeLoadBalancerServers() []Server {
+	var servers []Server
+
+	// Aggiungi server master
+	rpcAddrs := getMasterRpcAddresses()
+	for i, addr := range rpcAddrs {
+		parts := strings.Split(addr, ":")
+		if len(parts) == 2 {
+			port, _ := strconv.Atoi(parts[1])
+			servers = append(servers, Server{
+				ID:      fmt.Sprintf("master-%d", i),
+				Address: parts[0],
+				Port:    port,
+				Weight:  10, // Peso maggiore per i master
+				Healthy: true,
+			})
+		}
+	}
+
+	// Aggiungi server worker (se disponibili)
+	// Questo è un esempio - in un'implementazione reale dovresti
+	// interrogare i master per ottenere la lista dei worker
+	workerPorts := []int{8081, 8082, 8083} // Porte di esempio per i worker
+	for i, port := range workerPorts {
+		servers = append(servers, Server{
+			ID:      fmt.Sprintf("worker-%d", i),
+			Address: "localhost", // In produzione, usa l'IP reale
+			Port:    port,
+			Weight:  5, // Peso minore per i worker
+			Healthy: true,
+		})
+	}
+
+	return servers
+}
+
+// getLoadBalancerStats restituisce le statistiche del load balancer
+func (d *Dashboard) getLoadBalancerStats() map[string]interface{} {
+	if d.loadBalancer == nil {
+		return map[string]interface{}{
+			"enabled": false,
+			"message": "Load balancer non abilitato",
+		}
+	}
+
+	stats := d.loadBalancer.GetStats()
+	stats["enabled"] = true
+	return stats
+}
+
+// getS3Stats restituisce le statistiche S3
+func (d *Dashboard) getS3Stats() map[string]interface{} {
+	if d.s3Manager == nil {
+		return map[string]interface{}{
+			"enabled": false,
+			"message": "S3 storage non abilitato",
+		}
+	}
+
+	return d.s3Manager.GetStorageStats()
+}
+
+// ===== LOAD BALANCER ENDPOINTS =====
+
+// getLoadBalancerStatsEndpoint restituisce le statistiche del load balancer
+func (d *Dashboard) getLoadBalancerStatsEndpoint(c *gin.Context) {
+	stats := d.getLoadBalancerStats()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// addLoadBalancerServer aggiunge un server al load balancer
+func (d *Dashboard) addLoadBalancerServer(c *gin.Context) {
+	var request struct {
+		ID      string `json:"id" binding:"required"`
+		Address string `json:"address" binding:"required"`
+		Port    int    `json:"port" binding:"required"`
+		Weight  int    `json:"weight"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	if d.loadBalancer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Load balancer non abilitato",
+		})
+		return
+	}
+
+	server := Server{
+		ID:      request.ID,
+		Address: request.Address,
+		Port:    request.Port,
+		Weight:  request.Weight,
+		Healthy: true,
+	}
+
+	d.loadBalancer.AddServer(server)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Server %s aggiunto al load balancer", request.ID),
+	})
+}
+
+// removeLoadBalancerServer rimuove un server dal load balancer
+func (d *Dashboard) removeLoadBalancerServer(c *gin.Context) {
+	var request struct {
+		ServerID string `json:"server_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	if d.loadBalancer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Load balancer non abilitato",
+		})
+		return
+	}
+
+	d.loadBalancer.RemoveServer(request.ServerID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Server %s rimosso dal load balancer", request.ServerID),
+	})
+}
+
+// ===== S3 STORAGE ENDPOINTS =====
+
+// getS3StatsEndpoint restituisce le statistiche S3
+func (d *Dashboard) getS3StatsEndpoint(c *gin.Context) {
+	stats := d.getS3Stats()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// createS3Backup crea un backup S3
+func (d *Dashboard) createS3Backup(c *gin.Context) {
+	if d.s3Manager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "S3 storage non abilitato",
+		})
+		return
+	}
+
+	err := d.s3Manager.BackupClusterData()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to create backup",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Backup S3 creato con successo",
+	})
+}
+
+// listS3Backups elenca i backup S3 disponibili
+func (d *Dashboard) listS3Backups(c *gin.Context) {
+	if d.s3Manager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "S3 storage non abilitato",
+		})
+		return
+	}
+
+	backups, err := d.s3Manager.ListBackups()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to list backups",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    backups,
+	})
+}
+
+// restoreFromS3Backup ripristina da un backup S3
+func (d *Dashboard) restoreFromS3Backup(c *gin.Context) {
+	var request struct {
+		BackupTimestamp string `json:"backup_timestamp" binding:"required"`
+		LocalPath       string `json:"local_path" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	if d.s3Manager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "S3 storage non abilitato",
+		})
+		return
+	}
+
+	err := d.s3Manager.RestoreFromBackup(request.BackupTimestamp, request.LocalPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to restore from backup",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Ripristino da backup %s completato", request.BackupTimestamp),
+	})
 }

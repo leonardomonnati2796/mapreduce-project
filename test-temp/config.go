@@ -1,11 +1,5 @@
 package main
 
-import (
-	"fmt"
-	"os"
-	"strconv"
-)
-
 const (
 	defaultDashboardPort = 8080
 	defaultTempPath      = "temp-local"
@@ -40,31 +34,23 @@ type DashboardConfig struct {
 
 // LoadConfig carica la configurazione con valori di default
 func LoadConfig(configPath string) (*Config, error) {
+	// Per ora restituisce una configurazione di default
 	config := &Config{
 		Dashboard: DashboardConfig{
-			Port:    getEnvInt("DASHBOARD_PORT", defaultDashboardPort),
-			Enabled: getEnvBool("DASHBOARD_ENABLED", true),
+			Port:    defaultDashboardPort,
+			Enabled: true,
 		},
 		Paths: PathConfig{
-			Temp:     getEnvString("TEMP_PATH", defaultTempPath),
-			Output:   getEnvString("OUTPUT_PATH", defaultOutputPath),
-			RaftData: getEnvString("RAFT_DATA_PATH", defaultRaftDataPath),
+			Temp:     defaultTempPath,
+			Output:   defaultOutputPath,
+			RaftData: defaultRaftDataPath,
 		},
 	}
-
-	// Validazione configurazione
-	if err := validateConfig(config); err != nil {
-		return nil, fmt.Errorf("configurazione non valida: %v", err)
-	}
-
 	return config, nil
 }
 
-// GetConfig restituisce la configurazione globale o di default
+// GetConfig restituisce la configurazione di default
 func GetConfig() *Config {
-	if globalConfig != nil {
-		return globalConfig
-	}
 	config, _ := LoadConfig("")
 	return config
 }
@@ -92,51 +78,4 @@ func (c *Config) GetOutputPath() string {
 // GetRaftDataDir restituisce la directory dei dati Raft dalla configurazione globale
 func (c *Config) GetRaftDataDir() string {
 	return c.Paths.RaftData
-}
-
-// Helper functions per gestione variabili d'ambiente
-func getEnvString(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if boolValue, err := strconv.ParseBool(value); err == nil {
-			return boolValue
-		}
-	}
-	return defaultValue
-}
-
-// validateConfig valida la configurazione
-func validateConfig(config *Config) error {
-	if config.Dashboard.Port <= 0 || config.Dashboard.Port > 65535 {
-		return fmt.Errorf("porta dashboard non valida: %d", config.Dashboard.Port)
-	}
-
-	if config.Paths.Temp == "" {
-		return fmt.Errorf("percorso temporaneo non può essere vuoto")
-	}
-
-	if config.Paths.Output == "" {
-		return fmt.Errorf("percorso output non può essere vuoto")
-	}
-
-	if config.Paths.RaftData == "" {
-		return fmt.Errorf("percorso dati Raft non può essere vuoto")
-	}
-
-	return nil
 }

@@ -959,7 +959,7 @@ function updateWorkersTable(workersData) {
                 </span>
             </td>
             <td>
-                <span class="badge bg-info">${worker.tasks_done}</span>
+                <span class="badge bg-info">${worker.tasksDone}</span>
             </td>
             <td>
                 <small class="text-muted">${new Date(worker.last_seen).toLocaleTimeString()}</small>

@@ -120,6 +120,36 @@ variable "s3_terraform_bucket" {
   default     = "mapreduce-terraform-state"
 }
 
+variable "s3_sync_enabled" {
+  description = "Enable S3 synchronization"
+  type        = bool
+  default     = true
+}
+
+variable "s3_sync_interval" {
+  description = "S3 sync interval in seconds"
+  type        = number
+  default     = 60
+}
+
+variable "s3_encryption_enabled" {
+  description = "Enable S3 encryption"
+  type        = bool
+  default     = true
+}
+
+variable "s3_versioning_enabled" {
+  description = "Enable S3 versioning"
+  type        = bool
+  default     = true
+}
+
+variable "s3_lifecycle_enabled" {
+  description = "Enable S3 lifecycle management"
+  type        = bool
+  default     = true
+}
+
 # Database Configuration
 variable "db_instance_class" {
   description = "RDS instance class"
