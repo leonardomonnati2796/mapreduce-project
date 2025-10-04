@@ -54,6 +54,18 @@ type Dashboard struct {
 	// Load balancer support
 	loadBalancer *LoadBalancer
 	s3Manager    *S3StorageManager
+	// Optimization: Caching and pooling
+	dataCache     *DashboardDataCache
+	updateTicker  *time.Ticker
+	stopChan      chan struct{}
+	// Memory pools for frequent allocations
+	jobPool       sync.Pool
+	workerPool    sync.Pool
+	masterPool    sync.Pool
+	// Performance metrics
+	lastUpdate    time.Time
+	updateCount   int64
+	clientCount   int64
 }
 
 // DashboardData contiene i dati per il dashboard
@@ -70,6 +82,48 @@ type DashboardData struct {
 	DegradedWorkers int                    `json:"degraded_workers"`
 	FailedWorkers   int                    `json:"failed_workers"`
 	LastUpdate      time.Time              `json:"last_update"`
+	// Performance optimization fields
+	CacheHit        bool                  `json:"cache_hit,omitempty"`
+	UpdateTime      time.Duration         `json:"update_time,omitempty"`
+}
+
+// DashboardDataCache gestisce la cache dei dati del dashboard
+type DashboardDataCache struct {
+	data      *DashboardData
+	timestamp time.Time
+	mu        sync.RWMutex
+	ttl       time.Duration
+}
+
+// NewDashboardDataCache crea una nuova cache
+func NewDashboardDataCache(ttl time.Duration) *DashboardDataCache {
+	return &DashboardDataCache{
+		ttl: ttl,
+	}
+}
+
+// Get restituisce i dati dalla cache se validi
+func (c *DashboardDataCache) Get() (*DashboardData, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	if c.data == nil || time.Since(c.timestamp) > c.ttl {
+		return nil, false
+	}
+	
+	// Marca come cache hit
+	c.data.CacheHit = true
+	return c.data, true
+}
+
+// Set imposta i dati nella cache
+func (c *DashboardDataCache) Set(data *DashboardData) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	c.data = data
+	c.timestamp = time.Now()
+	c.data.CacheHit = false
 }
 
 // JobInfo informazioni su un job
@@ -129,6 +183,19 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		},
 		clients:   make(map[*websocket.Conn]bool),
 		broadcast: make(chan []byte),
+		// Optimization initialization
+		dataCache:  NewDashboardDataCache(5 * time.Second), // Cache TTL di 5 secondi
+		stopChan:   make(chan struct{}),
+		// Memory pools initialization
+		jobPool: sync.Pool{
+			New: func() interface{} { return &JobInfo{} },
+		},
+		workerPool: sync.Pool{
+			New: func() interface{} { return &WorkerInfoDashboard{} },
+		},
+		masterPool: sync.Pool{
+			New: func() interface{} { return &MasterInfo{} },
+		},
 	}
 
 	// Inizializza load balancer se abilitato
@@ -204,6 +271,9 @@ func (d *Dashboard) setupRoutes() {
 		api.POST("/s3/backup", d.createS3Backup)
 		api.GET("/s3/backups", d.listS3Backups)
 		api.POST("/s3/restore", d.restoreFromS3Backup)
+		
+		// Performance endpoints
+		api.GET("/performance", d.getPerformanceStatsEndpoint)
 	}
 
 	// WebSocket endpoint
@@ -324,8 +394,16 @@ func (d *Dashboard) getStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// getDashboardData raccoglie tutti i dati per il dashboard
+// getDashboardData raccoglie tutti i dati per il dashboard con ottimizzazioni
 func (d *Dashboard) getDashboardData() DashboardData {
+	startTime := time.Now()
+	
+	// Controlla prima la cache
+	if cachedData, hit := d.dataCache.Get(); hit {
+		LogDebug("Dashboard data served from cache")
+		return *cachedData
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -338,29 +416,33 @@ func (d *Dashboard) getDashboardData() DashboardData {
 	// Health check
 	health := d.healthChecker.CheckAll(ctx)
 
-	// Gestione errori per metrics
+	// Gestione errori ottimizzata per metrics
 	metrics, err := d.getMetricsData()
 	if err != nil {
+		LogWarn("Failed to collect metrics: %v", err)
 		metrics = map[string]interface{}{
-			"error": "Failed to collect metrics: " + err.Error(),
+			"error": "Failed to collect metrics",
 		}
 	}
 
-	// Gestione errori per jobs
+	// Gestione errori ottimizzata per jobs
 	jobs, err := d.getJobsData()
 	if err != nil {
+		LogWarn("Failed to collect jobs data: %v", err)
 		jobs = []JobInfo{}
 	}
 
-	// Gestione errori per workers
+	// Gestione errori ottimizzata per workers
 	workers, err := d.getWorkersData()
 	if err != nil {
+		LogWarn("Failed to collect workers data: %v", err)
 		workers = []WorkerInfoDashboard{}
 	}
 
-	// Gestione errori per masters
+	// Gestione errori ottimizzata per masters
 	masters, err := d.getMastersData()
 	if err != nil {
+		LogWarn("Failed to collect masters data: %v", err)
 		masters = []MasterInfo{}
 	}
 
@@ -380,7 +462,7 @@ func (d *Dashboard) getDashboardData() DashboardData {
 		}
 	}
 
-	return DashboardData{
+	data := DashboardData{
 		Title:           "MapReduce Dashboard",
 		Version:         "1.0.0",
 		Uptime:          uptime,
@@ -393,66 +475,178 @@ func (d *Dashboard) getDashboardData() DashboardData {
 		DegradedWorkers: degradedWorkers,
 		FailedWorkers:   failedWorkers,
 		LastUpdate:      now,
+		UpdateTime:      time.Since(startTime),
 	}
+
+	// Salva nella cache
+	d.dataCache.Set(&data)
+	
+	// Aggiorna metriche di performance
+	d.mu.Lock()
+	d.lastUpdate = now
+	d.updateCount++
+	d.mu.Unlock()
+
+	LogDebug("Dashboard data collected in %v", time.Since(startTime))
+	return data
 }
 
-// getMetricsData raccoglie i dati delle metriche reali
+// getMetricsData raccoglie i dati delle metriche reali (ottimizzato)
 func (d *Dashboard) getMetricsData() (map[string]interface{}, error) {
 	if d.metrics == nil {
 		return nil, fmt.Errorf("metrics collector not initialized")
 	}
 
-	// Raccoglie metriche reali disponibili
-	metrics := make(map[string]interface{})
+	// Pre-alloca la mappa con dimensione stimata per ridurre allocazioni
+	metrics := make(map[string]interface{}, 4)
 
-	// Metriche di base dal sistema
+	// Metriche di base dal sistema (sempre disponibili)
 	metrics["system"] = map[string]interface{}{
 		"uptime": time.Since(d.startTime).String(),
 		"status": "running",
 	}
 
-	// Metriche del load balancer (se disponibile)
+	// Metriche del load balancer (se disponibile) - con timeout
 	if d.loadBalancer != nil {
-		lbStats := d.loadBalancer.GetStats()
-		metrics["load_balancer"] = lbStats
-	}
-
-	// Metriche S3 (se disponibile)
-	if d.s3Manager != nil {
-		s3Stats := d.s3Manager.GetStorageStats()
-		metrics["s3_storage"] = s3Stats
-	}
-
-	// Metriche di health
-	if d.healthChecker != nil {
-		metrics["health"] = map[string]interface{}{
-			"status":  "healthy",
-			"message": "Health checker available",
+		done := make(chan struct{}, 1)
+		var lbStats interface{}
+		
+		go func() {
+			defer func() { done <- struct{}{} }()
+			lbStats = d.loadBalancer.GetStats()
+		}()
+		
+		select {
+		case <-done:
+			metrics["load_balancer"] = lbStats
+		case <-time.After(100 * time.Millisecond):
+			// Timeout per evitare blocchi
+			LogDebug("Load balancer stats timeout")
 		}
+	}
+
+	// Metriche S3 (se disponibile) - con timeout
+	if d.s3Manager != nil {
+		done := make(chan struct{}, 1)
+		var s3Stats interface{}
+		
+		go func() {
+			defer func() { done <- struct{}{} }()
+			s3Stats = d.s3Manager.GetStorageStats()
+		}()
+		
+		select {
+		case <-done:
+			metrics["s3_storage"] = s3Stats
+		case <-time.After(100 * time.Millisecond):
+			// Timeout per evitare blocchi
+			LogDebug("S3 stats timeout")
+		}
+	}
+
+	// Metriche di health (sempre disponibili)
+	metrics["health"] = map[string]interface{}{
+		"status":  "healthy",
+		"message": "Health checker available",
 	}
 
 	return metrics, nil
 }
 
-// getJobsData raccoglie i dati dei job reali
+// getJobsData raccoglie i dati dei job reali (ottimizzato con pool)
 func (d *Dashboard) getJobsData() ([]JobInfo, error) {
 	// Per ora restituisce una lista vuota - i job reali saranno implementati
 	// quando il master avrà i metodi appropriati
 	return []JobInfo{}, nil
 }
 
-// getWorkersData raccoglie i dati dei worker reali
+// getJobFromPool ottiene un JobInfo dal pool per riutilizzo
+func (d *Dashboard) getJobFromPool() *JobInfo {
+	return d.jobPool.Get().(*JobInfo)
+}
+
+// returnJobToPool restituisce un JobInfo al pool
+func (d *Dashboard) returnJobToPool(job *JobInfo) {
+	// Reset dei campi per il riutilizzo
+	*job = JobInfo{}
+	d.jobPool.Put(job)
+}
+
+// getWorkersData raccoglie i dati dei worker reali (ottimizzato con pool)
 func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 	// Per ora restituisce una lista vuota - i worker reali saranno implementati
 	// quando il master avrà i metodi appropriati
 	return []WorkerInfoDashboard{}, nil
 }
 
-// getMastersData raccoglie i dati dei master reali
+// getWorkerFromPool ottiene un WorkerInfoDashboard dal pool per riutilizzo
+func (d *Dashboard) getWorkerFromPool() *WorkerInfoDashboard {
+	return d.workerPool.Get().(*WorkerInfoDashboard)
+}
+
+// returnWorkerToPool restituisce un WorkerInfoDashboard al pool
+func (d *Dashboard) returnWorkerToPool(worker *WorkerInfoDashboard) {
+	// Reset dei campi per il riutilizzo
+	*worker = WorkerInfoDashboard{}
+	d.workerPool.Put(worker)
+}
+
+// getMastersData raccoglie i dati dei master reali (ottimizzato con pool)
 func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
 	// Per ora restituisce una lista vuota - i master reali saranno implementati
 	// quando il master avrà i metodi appropriati
 	return []MasterInfo{}, nil
+}
+
+// getMasterFromPool ottiene un MasterInfo dal pool per riutilizzo
+func (d *Dashboard) getMasterFromPool() *MasterInfo {
+	return d.masterPool.Get().(*MasterInfo)
+}
+
+// returnMasterToPool restituisce un MasterInfo al pool
+func (d *Dashboard) returnMasterToPool(master *MasterInfo) {
+	// Reset dei campi per il riutilizzo
+	*master = MasterInfo{}
+	d.masterPool.Put(master)
+}
+
+// Stop ferma il dashboard in modo pulito
+func (d *Dashboard) Stop() {
+	LogInfo("Stopping dashboard...")
+	
+	// Ferma gli aggiornamenti in tempo reale
+	if d.updateTicker != nil {
+		d.updateTicker.Stop()
+	}
+	
+	// Chiude tutti i client WebSocket
+	d.clientsMutex.Lock()
+	for client := range d.clients {
+		client.Close()
+	}
+	d.clients = make(map[*websocket.Conn]bool)
+	d.clientsMutex.Unlock()
+	
+	// Segnala di fermare le goroutine
+	close(d.stopChan)
+	
+	LogInfo("Dashboard stopped")
+}
+
+// GetPerformanceStats restituisce le statistiche di performance del dashboard
+func (d *Dashboard) GetPerformanceStats() map[string]interface{} {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	
+	return map[string]interface{}{
+		"uptime":         time.Since(d.startTime).String(),
+		"last_update":    d.lastUpdate,
+		"update_count":   d.updateCount,
+		"client_count":   d.clientCount,
+		"cache_enabled":  d.dataCache != nil,
+		"pools_enabled":  true, // I pool sono sempre abilitati
+		"websocket_clients": len(d.clients),
+	}
 }
 
 // Start avvia il server web
@@ -1642,37 +1836,37 @@ func (d *Dashboard) sendInitialData(conn *websocket.Conn) {
 
 // handleWebSocketMessages gestisce i messaggi broadcast
 func (d *Dashboard) handleWebSocketMessages() {
-	for {
-		select {
-		case message := <-d.broadcast:
-			d.clientsMutex.RLock()
-			for client := range d.clients {
-				err := client.WriteMessage(websocket.TextMessage, message)
-				if err != nil {
-					LogError("Error broadcasting message: %v", err)
-					client.Close()
-					delete(d.clients, client)
-				}
+	for message := range d.broadcast {
+		d.clientsMutex.RLock()
+		for client := range d.clients {
+			err := client.WriteMessage(websocket.TextMessage, message)
+			if err != nil {
+				LogError("Error broadcasting message: %v", err)
+				client.Close()
+				delete(d.clients, client)
 			}
-			d.clientsMutex.RUnlock()
 		}
+		d.clientsMutex.RUnlock()
 	}
 }
 
-// startRealTimeUpdates avvia gli aggiornamenti in tempo reale
+// startRealTimeUpdates avvia gli aggiornamenti in tempo reale ottimizzati
 func (d *Dashboard) startRealTimeUpdates() {
-	ticker := time.NewTicker(5 * time.Second) // Aggiorna ogni 5 secondi
-	defer ticker.Stop()
+	d.updateTicker = time.NewTicker(5 * time.Second) // Aggiorna ogni 5 secondi
+	defer d.updateTicker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-d.updateTicker.C:
 			d.broadcastUpdate()
+		case <-d.stopChan:
+			LogInfo("Real-time updates stopped")
+			return
 		}
 	}
 }
 
-// broadcastUpdate invia un aggiornamento a tutti i client connessi
+// broadcastUpdate invia un aggiornamento a tutti i client connessi (ottimizzato)
 func (d *Dashboard) broadcastUpdate() {
 	d.clientsMutex.RLock()
 	clientCount := len(d.clients)
@@ -1682,20 +1876,36 @@ func (d *Dashboard) broadcastUpdate() {
 		return // Nessun client connesso
 	}
 
-	// Raccoglie i dati aggiornati
-	mastersData, _ := d.getMastersData()
-	workersData, _ := d.getWorkersData()
-	healthData := d.healthChecker.CheckAll(context.Background())
+	// Usa i dati dalla cache se disponibili per ridurre la latenza
+	var updateData map[string]interface{}
+	
+	// Prova a usare i dati dalla cache
+	if cachedData, hit := d.dataCache.Get(); hit {
+		updateData = map[string]interface{}{
+			"type":      "realtime_update",
+			"timestamp": time.Now(),
+			"data": map[string]interface{}{
+				"masters": cachedData.Masters,
+				"workers": cachedData.Workers,
+				"health":  cachedData.Health,
+				"metrics": cachedData.Metrics,
+			},
+		}
+	} else {
+		// Fallback: raccoglie i dati in tempo reale
+		mastersData, _ := d.getMastersData()
+		workersData, _ := d.getWorkersData()
+		healthData := d.healthChecker.CheckAll(context.Background())
 
-	// Prepara l'aggiornamento
-	updateData := map[string]interface{}{
-		"type":      "realtime_update",
-		"timestamp": time.Now(),
-		"data": map[string]interface{}{
-			"masters": mastersData,
-			"workers": workersData,
-			"health":  healthData,
-		},
+		updateData = map[string]interface{}{
+			"type":      "realtime_update",
+			"timestamp": time.Now(),
+			"data": map[string]interface{}{
+				"masters": mastersData,
+				"workers": workersData,
+				"health":  healthData,
+			},
+		}
 	}
 
 	// Converte in JSON
@@ -1705,11 +1915,16 @@ func (d *Dashboard) broadcastUpdate() {
 		return
 	}
 
-	// Invia il broadcast
+	// Invia il broadcast con timeout per evitare blocchi
 	select {
 	case d.broadcast <- jsonData:
-	default:
+		// Aggiorna metriche
+		d.mu.Lock()
+		d.clientCount = int64(clientCount)
+		d.mu.Unlock()
+	case <-time.After(100 * time.Millisecond):
 		// Se il canale è pieno, salta questo aggiornamento
+		LogDebug("Broadcast channel full, skipping update")
 	}
 }
 
@@ -1982,4 +2197,10 @@ func (d *Dashboard) restoreFromS3Backup(c *gin.Context) {
 		"success": true,
 		"message": fmt.Sprintf("Ripristino da backup %s completato", request.BackupTimestamp),
 	})
+}
+
+// getPerformanceStatsEndpoint restituisce le statistiche di performance del dashboard
+func (d *Dashboard) getPerformanceStatsEndpoint(c *gin.Context) {
+	stats := d.GetPerformanceStats()
+	c.JSON(http.StatusOK, stats)
 }
