@@ -1666,3 +1666,311 @@ func (m *Master) WorkerHeartbeat(args *WorkerHeartbeatArgs, reply *WorkerHeartbe
 	reply.Message = "Heartbeat ricevuto"
 	return nil
 }
+
+// ===== METODI REALI PER DASHBOARD DATA =====
+
+// GetJobInfo restituisce informazioni sui job per il dashboard
+func (m *Master) GetJobInfo() []JobInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var jobs []JobInfo
+
+	// Crea un job principale basato sullo stato del master
+	jobID := "main-job"
+	status := "running"
+	phase := string(m.phase)
+
+	if m.isDone {
+		status = "completed"
+	}
+
+	// Calcola il progresso
+	var progress float64
+	if m.phase == MapPhase {
+		if len(m.mapTasks) > 0 {
+			progress = float64(m.mapTasksDone) / float64(len(m.mapTasks)) * 100
+		}
+	} else if m.phase == ReducePhase {
+		if len(m.reduceTasks) > 0 {
+			progress = float64(m.reduceTasksDone) / float64(len(m.reduceTasks)) * 100
+		}
+	} else if m.isDone {
+		progress = 100.0
+	}
+
+	// Calcola la durata (usa tempo di creazione come approssimazione)
+	var duration time.Duration
+	// Per ora usiamo una durata fissa - in un'implementazione reale
+	// dovresti tracciare il tempo di inizio del job
+	duration = 0
+
+	job := JobInfo{
+		ID:          jobID,
+		Status:      status,
+		Phase:       phase,
+		StartTime:   time.Now().Add(-duration), // Approssimazione
+		Duration:    duration,
+		MapTasks:    len(m.mapTasks),
+		ReduceTasks: len(m.reduceTasks),
+		Progress:    progress,
+	}
+
+	// Aggiungi end time se completato
+	if m.isDone {
+		endTime := time.Now()
+		job.EndTime = &endTime
+	}
+
+	jobs = append(jobs, job)
+	return jobs
+}
+
+// GetWorkers restituisce informazioni sui worker per il dashboard
+func (m *Master) GetWorkers() []WorkerInfoDashboard {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var workers []WorkerInfoDashboard
+
+	for workerID, worker := range m.workers {
+		// Determina lo status del worker
+		status := worker.Status
+		now := time.Now()
+
+		// Se non visto da più di 30 secondi, considera degradato
+		if now.Sub(worker.LastSeen) > 30*time.Second {
+			status = "degraded"
+		}
+
+		// Se non visto da più di 60 secondi, considera fallito
+		if now.Sub(worker.LastSeen) > 60*time.Second {
+			status = "failed"
+		}
+
+		// Trova il task corrente se esiste
+		currentTask := ""
+		for taskID, taskInfo := range m.mapTasks {
+			if taskInfo.State == InProgress {
+				// Verifica se questo worker sta eseguendo questo task
+				// Questo è una semplificazione - in un'implementazione reale
+				// dovresti tracciare quale worker sta eseguendo quale task
+				if taskID%len(m.workers) == 0 { // Esempio di distribuzione
+					currentTask = fmt.Sprintf("map-task-%d", taskID)
+				}
+			}
+		}
+
+		for taskID, taskInfo := range m.reduceTasks {
+			if taskInfo.State == InProgress {
+				if taskID%len(m.workers) == 0 { // Esempio di distribuzione
+					currentTask = fmt.Sprintf("reduce-task-%d", taskID)
+				}
+			}
+		}
+
+		workerDashboard := WorkerInfoDashboard{
+			ID:          workerID,
+			Status:      status,
+			LastSeen:    worker.LastSeen,
+			TasksDone:   worker.TasksDone,
+			CurrentTask: currentTask,
+		}
+
+		workers = append(workers, workerDashboard)
+	}
+
+	return workers
+}
+
+// GetMasterInfoForDashboard restituisce informazioni sui master per il dashboard
+func (m *Master) GetMasterInfoForDashboard() []MasterInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var masters []MasterInfo
+
+	// Informazioni sul master corrente
+	state := "follower"
+	role := "follower"
+	leader := false
+
+	if m.raft != nil {
+		raftState := m.raft.State()
+		switch raftState {
+		case raft.Leader:
+			state = "leader"
+			role = "leader"
+			leader = true
+		case raft.Candidate:
+			state = "candidate"
+			role = "candidate"
+		case raft.Follower:
+			state = "follower"
+			role = "follower"
+		}
+	}
+
+	master := MasterInfo{
+		ID:       fmt.Sprintf("master-%d", m.myID),
+		Role:     role,
+		State:    state,
+		Leader:   leader,
+		LastSeen: time.Now(),
+	}
+
+	masters = append(masters, master)
+	return masters
+}
+
+// GetRaftState restituisce lo stato del cluster Raft
+func (m *Master) GetRaftState() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	state := map[string]interface{}{
+		"is_leader": false,
+		"state":     "unknown",
+		"term":      0,
+		"index":     0,
+		"peers":     []string{},
+	}
+
+	if m.raft != nil {
+		state["is_leader"] = m.raft.State() == raft.Leader
+		state["state"] = m.raft.State().String()
+		state["term"] = m.raft.Stats()["last_log_term"]
+		state["index"] = m.raft.Stats()["last_log_index"]
+
+		// Aggiungi informazioni sui peer
+		peers := []string{}
+		for _, peer := range m.raft.GetConfiguration().Configuration().Servers {
+			peers = append(peers, string(peer.ID))
+		}
+		state["peers"] = peers
+	}
+
+	return state
+}
+
+// GetTaskMetrics restituisce metriche sui task
+func (m *Master) GetTaskMetrics() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Conta i task per stato
+	mapTaskCounts := make(map[TaskState]int)
+	reduceTaskCounts := make(map[TaskState]int)
+
+	for _, task := range m.mapTasks {
+		mapTaskCounts[task.State]++
+	}
+
+	for _, task := range m.reduceTasks {
+		reduceTaskCounts[task.State]++
+	}
+
+	// Calcola statistiche
+	totalMapTasks := len(m.mapTasks)
+	totalReduceTasks := len(m.reduceTasks)
+	completedMapTasks := mapTaskCounts[Completed]
+	completedReduceTasks := reduceTaskCounts[Completed]
+
+	metrics := map[string]interface{}{
+		"map_tasks": map[string]interface{}{
+			"total":       totalMapTasks,
+			"completed":   completedMapTasks,
+			"in_progress": mapTaskCounts[InProgress],
+			"pending":     mapTaskCounts[Pending],
+			"failed":      mapTaskCounts[Failed],
+		},
+		"reduce_tasks": map[string]interface{}{
+			"total":       totalReduceTasks,
+			"completed":   completedReduceTasks,
+			"in_progress": reduceTaskCounts[InProgress],
+			"pending":     reduceTaskCounts[Pending],
+			"failed":      reduceTaskCounts[Failed],
+		},
+		"overall": map[string]interface{}{
+			"phase":          string(m.phase),
+			"is_done":        m.isDone,
+			"total_workers":  len(m.workers),
+			"active_workers": m.getActiveWorkerCount(),
+		},
+	}
+
+	return metrics
+}
+
+// getActiveWorkerCount restituisce il numero di worker attivi
+func (m *Master) getActiveWorkerCount() int {
+	now := time.Now()
+	activeCount := 0
+
+	for _, worker := range m.workers {
+		if now.Sub(worker.LastSeen) <= 30*time.Second {
+			activeCount++
+		}
+	}
+
+	return activeCount
+}
+
+// GetSystemHealth restituisce lo stato di salute del sistema
+func (m *Master) GetSystemHealth() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	health := map[string]interface{}{
+		"overall": "healthy",
+		"components": map[string]interface{}{
+			"raft":    "healthy",
+			"workers": "healthy",
+			"tasks":   "healthy",
+		},
+		"issues": []string{},
+	}
+
+	// Controlla lo stato Raft
+	if m.raft == nil {
+		health["components"].(map[string]interface{})["raft"] = "unhealthy"
+		health["issues"] = append(health["issues"].([]string), "Raft not initialized")
+	}
+
+	// Controlla i worker
+	activeWorkers := m.getActiveWorkerCount()
+	if activeWorkers == 0 {
+		health["components"].(map[string]interface{})["workers"] = "unhealthy"
+		health["issues"] = append(health["issues"].([]string), "No active workers")
+	}
+
+	// Controlla i task falliti
+	failedMapTasks := 0
+	failedReduceTasks := 0
+
+	for _, task := range m.mapTasks {
+		if task.State == Failed {
+			failedMapTasks++
+		}
+	}
+
+	for _, task := range m.reduceTasks {
+		if task.State == Failed {
+			failedReduceTasks++
+		}
+	}
+
+	if failedMapTasks > 0 || failedReduceTasks > 0 {
+		health["components"].(map[string]interface{})["tasks"] = "degraded"
+		health["issues"] = append(health["issues"].([]string),
+			fmt.Sprintf("Failed tasks: %d map, %d reduce", failedMapTasks, failedReduceTasks))
+	}
+
+	// Determina lo stato generale
+	hasIssues := len(health["issues"].([]string)) > 0
+	if hasIssues {
+		health["overall"] = "degraded"
+	}
+
+	return health
+}

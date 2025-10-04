@@ -64,6 +64,8 @@ const (
 	Idle TaskState = iota
 	InProgress
 	Completed
+	Pending
+	Failed
 )
 
 // Task types

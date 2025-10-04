@@ -197,8 +197,8 @@ func runDashboard() {
 	// Create metrics collector
 	metrics := NewMetricCollector()
 
-	// Create dashboard
-	dashboard, err := NewDashboard(config, healthChecker, metrics)
+	// Create dashboard (senza master per ora - sarà aggiunto quando disponibile)
+	dashboard, err := NewDashboard(config, healthChecker, metrics, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create dashboard: %v\n", err)
 		return

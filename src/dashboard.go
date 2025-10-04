@@ -53,7 +53,7 @@ type Dashboard struct {
 	clientsMutex sync.RWMutex
 	broadcast    chan []byte
 	// Enhanced WebSocket manager
-	wsManager    *WebSocketManager
+	wsManager *WebSocketManager
 	// Load balancer support
 	loadBalancer *LoadBalancer
 	s3Manager    *S3StorageManager
@@ -163,7 +163,7 @@ type MasterInfo struct {
 }
 
 // NewDashboard crea un nuovo dashboard
-func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricCollector) (*Dashboard, error) {
+func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricCollector, master *Master) (*Dashboard, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
@@ -178,6 +178,7 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		config:        config,
 		healthChecker: healthChecker,
 		metrics:       metrics,
+		master:        master,
 		router:        gin.Default(),
 		startTime:     time.Now(),
 		// WebSocket initialization
@@ -226,14 +227,14 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 	}
 
 	d.setupRoutes()
-	
+
 	// Avvia il WebSocket manager avanzato
 	go d.wsManager.Start()
-	
+
 	// Mantieni compatibilità con il sistema esistente
 	go d.handleWebSocketMessages()
 	go d.startRealTimeUpdates()
-	
+
 	return d, nil
 }
 
@@ -573,14 +574,33 @@ func (d *Dashboard) getMetricsData() (map[string]interface{}, error) {
 		"message": "Health checker available",
 	}
 
+	// Metriche reali dal Master se disponibile
+	if d.master != nil {
+		// Aggiungi metriche dei task
+		taskMetrics := d.master.GetTaskMetrics()
+		metrics["task_metrics"] = taskMetrics
+
+		// Aggiungi stato Raft
+		raftState := d.master.GetRaftState()
+		metrics["raft_state"] = raftState
+
+		// Aggiungi health del sistema
+		systemHealth := d.master.GetSystemHealth()
+		metrics["system_health"] = systemHealth
+	}
+
 	return metrics, nil
 }
 
 // getJobsData raccoglie i dati dei job reali (ottimizzato con pool)
 func (d *Dashboard) getJobsData() ([]JobInfo, error) {
-	// Per ora restituisce una lista vuota - i job reali saranno implementati
-	// quando il master avrà i metodi appropriati
-	return []JobInfo{}, nil
+	if d.master == nil {
+		return []JobInfo{}, nil
+	}
+
+	// Usa i metodi reali del Master
+	jobs := d.master.GetJobInfo()
+	return jobs, nil
 }
 
 // getJobFromPool ottiene un JobInfo dal pool per riutilizzo
@@ -597,9 +617,13 @@ func (d *Dashboard) returnJobToPool(job *JobInfo) {
 
 // getWorkersData raccoglie i dati dei worker reali (ottimizzato con pool)
 func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
-	// Per ora restituisce una lista vuota - i worker reali saranno implementati
-	// quando il master avrà i metodi appropriati
-	return []WorkerInfoDashboard{}, nil
+	if d.master == nil {
+		return []WorkerInfoDashboard{}, nil
+	}
+
+	// Usa i metodi reali del Master
+	workers := d.master.GetWorkers()
+	return workers, nil
 }
 
 // getWorkerFromPool ottiene un WorkerInfoDashboard dal pool per riutilizzo
@@ -616,9 +640,13 @@ func (d *Dashboard) returnWorkerToPool(worker *WorkerInfoDashboard) {
 
 // getMastersData raccoglie i dati dei master reali (ottimizzato con pool)
 func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
-	// Per ora restituisce una lista vuota - i master reali saranno implementati
-	// quando il master avrà i metodi appropriati
-	return []MasterInfo{}, nil
+	if d.master == nil {
+		return []MasterInfo{}, nil
+	}
+
+	// Usa i metodi reali del Master
+	masters := d.master.GetMasterInfoForDashboard()
+	return masters, nil
 }
 
 // getMasterFromPool ottiene un MasterInfo dal pool per riutilizzo
@@ -1926,19 +1954,19 @@ func (d *Dashboard) broadcastAdvancedUpdate() {
 	if cachedData, hit := d.dataCache.Get(); hit {
 		// Broadcast metriche
 		d.wsManager.BroadcastMetricsUpdate(cachedData.Metrics)
-		
+
 		// Broadcast job updates
 		d.wsManager.BroadcastJobUpdate(cachedData.Jobs)
-		
+
 		// Broadcast worker updates
 		d.wsManager.BroadcastWorkerUpdate(cachedData.Workers)
-		
+
 		// Broadcast master updates
 		d.wsManager.BroadcastMasterUpdate(cachedData.Masters)
-		
+
 		// Broadcast system health
 		d.wsManager.BroadcastSystemHealthUpdate(cachedData.Health)
-		
+
 		// Broadcast performance stats
 		performanceStats := d.GetPerformanceStats()
 		d.wsManager.BroadcastPerformanceUpdate(performanceStats)
@@ -1956,7 +1984,7 @@ func (d *Dashboard) broadcastAdvancedUpdate() {
 		d.wsManager.BroadcastSystemHealthUpdate(healthData)
 		d.wsManager.BroadcastJobUpdate(jobsData)
 		d.wsManager.BroadcastMetricsUpdate(metricsData)
-		
+
 		// Performance stats
 		performanceStats := d.GetPerformanceStats()
 		d.wsManager.BroadcastPerformanceUpdate(performanceStats)
@@ -1967,7 +1995,7 @@ func (d *Dashboard) broadcastAdvancedUpdate() {
 func (d *Dashboard) broadcastLegacyUpdate() {
 	// Usa i dati dalla cache se disponibili per ridurre la latenza
 	var updateData map[string]interface{}
-	
+
 	// Prova a usare i dati dalla cache
 	if cachedData, hit := d.dataCache.Get(); hit {
 		updateData = map[string]interface{}{
@@ -2312,7 +2340,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 	d.clientsMutex.RLock()
 	connectionCount := len(d.clients)
 	d.clientsMutex.RUnlock()
-	
+
 	// Usa le metriche del WebSocket manager se disponibile
 	wsMessages := int64(1)
 	wsErrors := int64(0)
@@ -2325,7 +2353,7 @@ func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime 
 			wsErrors = errCount
 		}
 	}
-	
+
 	d.prometheusMetrics.UpdateWebSocketMetrics(
 		connectionCount,
 		wsMessages,
@@ -2434,10 +2462,10 @@ func (d *Dashboard) handleAdvancedWebSocket(c *gin.Context) {
 
 	// Crea un nuovo client WebSocket
 	client := &WebSocketClient{
-		conn:    conn,
-		send:    make(chan []byte, 256),
-		manager: d.wsManager,
-		userID:  c.GetHeader("X-User-ID"), // Opzionale: autenticazione
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		manager:  d.wsManager,
+		userID:   c.GetHeader("X-User-ID"), // Opzionale: autenticazione
 		lastPing: time.Now(),
 	}
 
@@ -2513,7 +2541,7 @@ func (d *Dashboard) handleAdvancedWebSocketMessage(client *WebSocketClient, msg 
 		// Invia le metriche Prometheus
 		if d.prometheusMetrics != nil {
 			metrics := map[string]interface{}{
-				"cache_hit_ratio": d.prometheusMetrics.GetCacheHitRatio(),
+				"cache_hit_ratio":     d.prometheusMetrics.GetCacheHitRatio(),
 				"system_health_score": d.prometheusMetrics.GetSystemHealthScore(),
 			}
 			metricsMsg := WebSocketMessage{
