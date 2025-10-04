@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -55,17 +56,19 @@ type Dashboard struct {
 	loadBalancer *LoadBalancer
 	s3Manager    *S3StorageManager
 	// Optimization: Caching and pooling
-	dataCache     *DashboardDataCache
-	updateTicker  *time.Ticker
-	stopChan      chan struct{}
+	dataCache    *DashboardDataCache
+	updateTicker *time.Ticker
+	stopChan     chan struct{}
 	// Memory pools for frequent allocations
-	jobPool       sync.Pool
-	workerPool    sync.Pool
-	masterPool    sync.Pool
+	jobPool    sync.Pool
+	workerPool sync.Pool
+	masterPool sync.Pool
 	// Performance metrics
-	lastUpdate    time.Time
-	updateCount   int64
-	clientCount   int64
+	lastUpdate  time.Time
+	updateCount int64
+	clientCount int64
+	// Prometheus metrics
+	prometheusMetrics *PrometheusMetrics
 }
 
 // DashboardData contiene i dati per il dashboard
@@ -83,8 +86,8 @@ type DashboardData struct {
 	FailedWorkers   int                    `json:"failed_workers"`
 	LastUpdate      time.Time              `json:"last_update"`
 	// Performance optimization fields
-	CacheHit        bool                  `json:"cache_hit,omitempty"`
-	UpdateTime      time.Duration         `json:"update_time,omitempty"`
+	CacheHit   bool          `json:"cache_hit,omitempty"`
+	UpdateTime time.Duration `json:"update_time,omitempty"`
 }
 
 // DashboardDataCache gestisce la cache dei dati del dashboard
@@ -106,11 +109,11 @@ func NewDashboardDataCache(ttl time.Duration) *DashboardDataCache {
 func (c *DashboardDataCache) Get() (*DashboardData, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	if c.data == nil || time.Since(c.timestamp) > c.ttl {
 		return nil, false
 	}
-	
+
 	// Marca come cache hit
 	c.data.CacheHit = true
 	return c.data, true
@@ -120,7 +123,7 @@ func (c *DashboardDataCache) Get() (*DashboardData, bool) {
 func (c *DashboardDataCache) Set(data *DashboardData) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.data = data
 	c.timestamp = time.Now()
 	c.data.CacheHit = false
@@ -184,8 +187,8 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		clients:   make(map[*websocket.Conn]bool),
 		broadcast: make(chan []byte),
 		// Optimization initialization
-		dataCache:  NewDashboardDataCache(5 * time.Second), // Cache TTL di 5 secondi
-		stopChan:   make(chan struct{}),
+		dataCache: NewDashboardDataCache(5 * time.Second), // Cache TTL di 5 secondi
+		stopChan:  make(chan struct{}),
 		// Memory pools initialization
 		jobPool: sync.Pool{
 			New: func() interface{} { return &JobInfo{} },
@@ -196,6 +199,8 @@ func NewDashboard(config *Config, healthChecker *HealthChecker, metrics *MetricC
 		masterPool: sync.Pool{
 			New: func() interface{} { return &MasterInfo{} },
 		},
+		// Inizializza metriche Prometheus
+		prometheusMetrics: NewPrometheusMetrics(),
 	}
 
 	// Inizializza load balancer se abilitato
@@ -271,9 +276,12 @@ func (d *Dashboard) setupRoutes() {
 		api.POST("/s3/backup", d.createS3Backup)
 		api.GET("/s3/backups", d.listS3Backups)
 		api.POST("/s3/restore", d.restoreFromS3Backup)
-		
+
 		// Performance endpoints
 		api.GET("/performance", d.getPerformanceStatsEndpoint)
+		
+		// Prometheus metrics endpoint
+		api.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	}
 
 	// WebSocket endpoint
@@ -397,7 +405,7 @@ func (d *Dashboard) getStatus(c *gin.Context) {
 // getDashboardData raccoglie tutti i dati per il dashboard con ottimizzazioni
 func (d *Dashboard) getDashboardData() DashboardData {
 	startTime := time.Now()
-	
+
 	// Controlla prima la cache
 	if cachedData, hit := d.dataCache.Get(); hit {
 		LogDebug("Dashboard data served from cache")
@@ -487,6 +495,9 @@ func (d *Dashboard) getDashboardData() DashboardData {
 	d.updateCount++
 	d.mu.Unlock()
 
+	// Aggiorna metriche Prometheus
+	d.updatePrometheusMetrics(&data, time.Since(startTime))
+
 	LogDebug("Dashboard data collected in %v", time.Since(startTime))
 	return data
 }
@@ -510,12 +521,12 @@ func (d *Dashboard) getMetricsData() (map[string]interface{}, error) {
 	if d.loadBalancer != nil {
 		done := make(chan struct{}, 1)
 		var lbStats interface{}
-		
+
 		go func() {
 			defer func() { done <- struct{}{} }()
 			lbStats = d.loadBalancer.GetStats()
 		}()
-		
+
 		select {
 		case <-done:
 			metrics["load_balancer"] = lbStats
@@ -529,12 +540,12 @@ func (d *Dashboard) getMetricsData() (map[string]interface{}, error) {
 	if d.s3Manager != nil {
 		done := make(chan struct{}, 1)
 		var s3Stats interface{}
-		
+
 		go func() {
 			defer func() { done <- struct{}{} }()
 			s3Stats = d.s3Manager.GetStorageStats()
 		}()
-		
+
 		select {
 		case <-done:
 			metrics["s3_storage"] = s3Stats
@@ -613,12 +624,12 @@ func (d *Dashboard) returnMasterToPool(master *MasterInfo) {
 // Stop ferma il dashboard in modo pulito
 func (d *Dashboard) Stop() {
 	LogInfo("Stopping dashboard...")
-	
+
 	// Ferma gli aggiornamenti in tempo reale
 	if d.updateTicker != nil {
 		d.updateTicker.Stop()
 	}
-	
+
 	// Chiude tutti i client WebSocket
 	d.clientsMutex.Lock()
 	for client := range d.clients {
@@ -626,10 +637,10 @@ func (d *Dashboard) Stop() {
 	}
 	d.clients = make(map[*websocket.Conn]bool)
 	d.clientsMutex.Unlock()
-	
+
 	// Segnala di fermare le goroutine
 	close(d.stopChan)
-	
+
 	LogInfo("Dashboard stopped")
 }
 
@@ -637,16 +648,27 @@ func (d *Dashboard) Stop() {
 func (d *Dashboard) GetPerformanceStats() map[string]interface{} {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	
-	return map[string]interface{}{
-		"uptime":         time.Since(d.startTime).String(),
-		"last_update":    d.lastUpdate,
-		"update_count":   d.updateCount,
-		"client_count":   d.clientCount,
-		"cache_enabled":  d.dataCache != nil,
-		"pools_enabled":  true, // I pool sono sempre abilitati
+
+	stats := map[string]interface{}{
+		"uptime":            time.Since(d.startTime).String(),
+		"last_update":       d.lastUpdate,
+		"update_count":      d.updateCount,
+		"client_count":      d.clientCount,
+		"cache_enabled":     d.dataCache != nil,
+		"pools_enabled":     true, // I pool sono sempre abilitati
 		"websocket_clients": len(d.clients),
 	}
+	
+	// Aggiungi metriche Prometheus se disponibili
+	if d.prometheusMetrics != nil {
+		stats["prometheus_enabled"] = true
+		stats["cache_hit_ratio"] = d.prometheusMetrics.GetCacheHitRatio()
+		stats["system_health_score"] = d.prometheusMetrics.GetSystemHealthScore()
+	} else {
+		stats["prometheus_enabled"] = false
+	}
+	
+	return stats
 }
 
 // Start avvia il server web
@@ -1878,7 +1900,7 @@ func (d *Dashboard) broadcastUpdate() {
 
 	// Usa i dati dalla cache se disponibili per ridurre la latenza
 	var updateData map[string]interface{}
-	
+
 	// Prova a usare i dati dalla cache
 	if cachedData, hit := d.dataCache.Get(); hit {
 		updateData = map[string]interface{}{
@@ -2203,4 +2225,114 @@ func (d *Dashboard) restoreFromS3Backup(c *gin.Context) {
 func (d *Dashboard) getPerformanceStatsEndpoint(c *gin.Context) {
 	stats := d.GetPerformanceStats()
 	c.JSON(http.StatusOK, stats)
+}
+
+// updatePrometheusMetrics aggiorna le metriche Prometheus con i dati del dashboard
+func (d *Dashboard) updatePrometheusMetrics(data *DashboardData, collectionTime time.Duration) {
+	if d.prometheusMetrics == nil {
+		return
+	}
+
+	// Aggiorna metriche del dashboard
+	d.prometheusMetrics.UpdateDashboardMetrics(
+		data.Uptime,
+		1, // requests increment
+		0, // errors (se non ci sono errori)
+		data.UpdateTime,
+	)
+
+	// Aggiorna metriche WebSocket
+	d.clientsMutex.RLock()
+	connectionCount := len(d.clients)
+	d.clientsMutex.RUnlock()
+	
+	d.prometheusMetrics.UpdateWebSocketMetrics(
+		connectionCount,
+		1, // messages sent
+		0, // errors
+	)
+
+	// Aggiorna metriche di cache
+	cacheHits := int64(0)
+	cacheMisses := int64(0)
+	if data.CacheHit {
+		cacheHits = 1
+	} else {
+		cacheMisses = 1
+	}
+	
+	d.prometheusMetrics.UpdateCacheMetrics(
+		cacheHits,
+		cacheMisses,
+		1024*1024, // cache size in bytes (esempio)
+	)
+
+	// Aggiorna metriche di performance
+	poolUsage := 0.5 // Esempio: 50% di utilizzo dei pool
+	concurrentRequests := 1 // Esempio: 1 richiesta concorrente
+	
+	d.prometheusMetrics.UpdatePerformanceMetrics(
+		collectionTime,
+		poolUsage,
+		concurrentRequests,
+	)
+
+	// Aggiorna metriche del sistema
+	systemHealthy := data.Health.Status == "healthy"
+	lbHealthy := d.loadBalancer != nil
+	s3Healthy := d.s3Manager != nil
+	
+	d.prometheusMetrics.UpdateSystemMetrics(
+		systemHealthy,
+		lbHealthy,
+		s3Healthy,
+	)
+
+	// Aggiorna metriche dei job
+	activeJobs := len(data.Jobs)
+	completedJobs := 0
+	failedJobs := 0
+	
+	for _, job := range data.Jobs {
+		switch job.Status {
+		case "completed":
+			completedJobs++
+		case "failed":
+			failedJobs++
+		}
+	}
+	
+	d.prometheusMetrics.UpdateJobMetrics(
+		int64(len(data.Jobs)),
+		int64(activeJobs),
+		int64(completedJobs),
+		int64(failedJobs),
+	)
+
+	// Aggiorna metriche dei worker
+	d.prometheusMetrics.UpdateWorkerMetrics(
+		len(data.Workers),
+		data.ActiveWorkers,
+		data.DegradedWorkers,
+		data.FailedWorkers,
+	)
+
+	// Aggiorna metriche dei master
+	activeMasters := 0
+	leaderMasters := 0
+	
+	for _, master := range data.Masters {
+		if master.Role == "leader" {
+			leaderMasters++
+		}
+		if master.State == "active" {
+			activeMasters++
+		}
+	}
+	
+	d.prometheusMetrics.UpdateMasterMetrics(
+		len(data.Masters),
+		activeMasters,
+		leaderMasters,
+	)
 }
