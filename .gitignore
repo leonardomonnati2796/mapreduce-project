@@ -1,38 +1,140 @@
-# Binari e eseguibili
+# Binaries for programs and plugins
 *.exe
-*.bin
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
 mapreduce
 mapreduce-dashboard
 cli
+s3-sync
 
-# File temporanei
-temp-local/
-*.tmp
-*.temp
+# Go workspace files
+go.work
+go.work.sum
 
-# Log files
+# Output and temporary files
+/data/output/*
+!/data/output/.gitkeep
+/temp-local/
+/raft-data-*/
+/raft-data/
+/logs/
 *.log
-docker_logs.txt
+mapreduce.log
 
-# Output files
-data/output/
-mr-*
+# Test binary, built with `go test -c`
+*.test
 
-# IDE files
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.txt
+
+# Dependency directories
+vendor/
+
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS files
+*~
 .DS_Store
+
+# Environment and configuration files
+.env
+.env.local
+*.local
+*-local.*
+
+# AWS and cloud credentials
+*.pem
+*.key
+*.crt
+aws-credentials.txt
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Docker volumes and data
+docker/data/*
+!/docker/data/.gitkeep
+docker_logs.txt
+
+# Temporary and backup files
+nul
+*.tmp
+*.bak
+*.swp
+*~.nib
+*.orig
+
+# Build artifacts
+/build/
+/dist/
+/bin/
+
+# OS generated files
 Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
 
-# Go build cache
-go.sum.bak
+# Node modules (if using any JS tools)
+node_modules/
 
-# Docker volumes
-docker/data/
+# Python cache (if using any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 
-# Test output
-test-output/
+# Compiled files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Package files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+*.db
+
+# Test temp directories
+/test-temp/
+/temp/
+/tmp/
+
+# Report build artifacts
+/report/*.aux
+/report/*.log
+/report/*.out
+/report/*.toc
+/report/*.synctex.gz
+/report/*.fls
+/report/*.fdb_latexmk
+
+# Keep only PDF
+!/report/report.pdf
