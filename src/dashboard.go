@@ -396,295 +396,63 @@ func (d *Dashboard) getDashboardData() DashboardData {
 	}
 }
 
-// getMetricsData raccoglie i dati delle metriche
+// getMetricsData raccoglie i dati delle metriche reali
 func (d *Dashboard) getMetricsData() (map[string]interface{}, error) {
 	if d.metrics == nil {
 		return nil, fmt.Errorf("metrics collector not initialized")
 	}
 
-	// In una implementazione reale, raccoglieresti le metriche da Prometheus
-	// Per ora restituiamo dati simulati
-	metrics := map[string]interface{}{
-		"tasks_total": map[string]interface{}{
-			"map_completed":    10,
-			"reduce_completed": 5,
-			"failed":           0,
-		},
-		"raft_state": map[string]interface{}{
-			"leader":   true,
-			"term":     1,
-			"log_size": 100,
-		},
-		"performance": map[string]interface{}{
-			"avg_task_duration": "2.5s",
-			"throughput":        "10 tasks/min",
-			"cpu_usage":         "45%",
-			"memory_usage":      "128MB",
-		},
+	// Raccoglie metriche reali disponibili
+	metrics := make(map[string]interface{})
+
+	// Metriche di base dal sistema
+	metrics["system"] = map[string]interface{}{
+		"uptime": time.Since(d.startTime).String(),
+		"status": "running",
 	}
+
+	// Metriche del load balancer (se disponibile)
+	if d.loadBalancer != nil {
+		lbStats := d.loadBalancer.GetStats()
+		metrics["load_balancer"] = lbStats
+	}
+
+	// Metriche S3 (se disponibile)
+	if d.s3Manager != nil {
+		s3Stats := d.s3Manager.GetStorageStats()
+		metrics["s3_storage"] = s3Stats
+	}
+
+	// Metriche di health
+	if d.healthChecker != nil {
+		metrics["health"] = map[string]interface{}{
+			"status":  "healthy",
+			"message": "Health checker available",
+		}
+	}
+
 	return metrics, nil
 }
 
-// getJobsData raccoglie i dati dei job
+// getJobsData raccoglie i dati dei job reali
 func (d *Dashboard) getJobsData() ([]JobInfo, error) {
-	// In una implementazione reale, raccoglieresti i dati dal Master
-	// Per ora restituiamo dati simulati
-	jobs := []JobInfo{
-		{
-			ID:          "job-1",
-			Status:      "running",
-			Phase:       "map",
-			StartTime:   time.Now().Add(-5 * time.Minute),
-			MapTasks:    10,
-			ReduceTasks: 5,
-			Progress:    75.5,
-		},
-	}
-	return jobs, nil
+	// Per ora restituisce una lista vuota - i job reali saranno implementati
+	// quando il master avrà i metodi appropriati
+	return []JobInfo{}, nil
 }
 
-// getWorkersData raccoglie i dati dei worker interrogando solo il leader master
+// getWorkersData raccoglie i dati dei worker reali
 func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
-	// Ottieni gli indirizzi RPC dei master
-	rpcAddrs := getMasterRpcAddresses()
-
-	// Debug: stampa gli indirizzi RPC che stiamo usando
-	LogInfo("[Dashboard] Getting worker data from masters: %v", rpcAddrs)
-
-	// Trova prima il leader master
-	var leaderAddr string
-	var leaderID int = -1
-
-	for i, rpcAddr := range rpcAddrs {
-		client, err := rpc.DialHTTP("tcp", rpcAddr)
-		if err != nil {
-			LogWarn("[Dashboard] Failed to connect to master %d at %s: %v", i, rpcAddr, err)
-			continue
-		}
-
-		var args GetMasterInfoArgs
-		var reply MasterInfoReply
-		err = client.Call("Master.GetMasterInfo", &args, &reply)
-		client.Close()
-
-		if err == nil && reply.IsLeader {
-			leaderAddr = rpcAddr
-			leaderID = i
-			LogInfo("[Dashboard] Found leader master %d at %s", i, rpcAddr)
-			break
-		}
-	}
-
-	// Se non troviamo il leader, interroga tutti i master come fallback
-	if leaderAddr == "" {
-		LogWarn("[Dashboard] No leader found, using fallback approach")
-		return d.getWorkersDataFromAllMasters(rpcAddrs)
-	}
-
-	// Interroga solo il leader per ottenere le informazioni sui worker
-	workerInfo, err := d.queryWorkerInfo(leaderID, leaderAddr)
-	if err != nil {
-		LogError("[Dashboard] Failed to get worker info from leader master %d at %s: %v", leaderID, leaderAddr, err)
-		return d.getWorkersDataFromAllMasters(rpcAddrs)
-	}
-
-	// Converti i worker info in WorkerInfoDashboard
-	var allWorkers []WorkerInfoDashboard
-	for _, worker := range workerInfo.Workers {
-		allWorkers = append(allWorkers, WorkerInfoDashboard{
-			ID:        worker.ID,
-			Status:    worker.Status,
-			LastSeen:  worker.LastSeen,
-			TasksDone: worker.TasksDone,
-		})
-	}
-
-	// Se non ci sono worker reali, restituisce lista vuota (no fallback workers)
-	if len(allWorkers) == 0 {
-		LogWarn("[Dashboard] No workers found from leader master")
-		return []WorkerInfoDashboard{}, nil
-	}
-
-	LogInfo("[Dashboard] Found %d workers from leader master", len(allWorkers))
-	return allWorkers, nil
+	// Per ora restituisce una lista vuota - i worker reali saranno implementati
+	// quando il master avrà i metodi appropriati
+	return []WorkerInfoDashboard{}, nil
 }
 
-// getWorkersDataFromAllMasters fallback method che interroga tutti i master
-func (d *Dashboard) getWorkersDataFromAllMasters(rpcAddrs []string) ([]WorkerInfoDashboard, error) {
-	var allWorkers []WorkerInfoDashboard
-	workerMap := make(map[string]*WorkerInfoDashboard) // Per evitare duplicati
-
-	// Interroga ogni master per ottenere le informazioni sui worker
-	for i, rpcAddr := range rpcAddrs {
-		workerInfo, err := d.queryWorkerInfo(i, rpcAddr)
-		if err != nil {
-			LogWarn("[Dashboard] Failed to get worker info from master %d at %s: %v", i, rpcAddr, err)
-			continue
-		}
-
-		// Aggiungi i worker alla mappa (evita duplicati)
-		for _, worker := range workerInfo.Workers {
-			if existingWorker, exists := workerMap[worker.ID]; exists {
-				// Aggiorna il worker esistente se questo è più recente
-				if worker.LastSeen.After(existingWorker.LastSeen) {
-					workerMap[worker.ID] = &WorkerInfoDashboard{
-						ID:        worker.ID,
-						Status:    worker.Status,
-						LastSeen:  worker.LastSeen,
-						TasksDone: worker.TasksDone,
-					}
-				}
-			} else {
-				workerMap[worker.ID] = &WorkerInfoDashboard{
-					ID:        worker.ID,
-					Status:    worker.Status,
-					LastSeen:  worker.LastSeen,
-					TasksDone: worker.TasksDone,
-				}
-			}
-		}
-	}
-
-	// Converti la mappa in slice
-	for _, worker := range workerMap {
-		allWorkers = append(allWorkers, *worker)
-	}
-
-	// Se non ci sono worker reali, restituisce lista vuota (no fallback workers)
-	if len(allWorkers) == 0 {
-		LogWarn("[Dashboard] No workers found from any master")
-		return []WorkerInfoDashboard{}, nil
-	}
-
-	LogInfo("[Dashboard] Found %d unique workers from all masters", len(allWorkers))
-	return allWorkers, nil
-}
-
-// getMastersData raccoglie i dati dei master interrogando i master reali
+// getMastersData raccoglie i dati dei master reali
 func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
-	// Ottieni gli indirizzi RPC dei master
-	rpcAddrs := getMasterRpcAddresses()
-
-	// Debug: stampa gli indirizzi RPC che stiamo usando
-	LogInfo("[Dashboard] Using RPC addresses: %v", rpcAddrs)
-
-	var masters []MasterInfo
-
-	// Interroga ogni master per ottenere le informazioni reali
-	for i, rpcAddr := range rpcAddrs {
-		masterInfo, err := d.queryMasterInfo(i, rpcAddr)
-		if err != nil {
-			// Se non riesci a contattare il master, aggiungi informazioni di fallback
-			masterInfo = MasterInfo{
-				ID:       fmt.Sprintf("master-%d", i),
-				Role:     "unknown",
-				State:    "unreachable",
-				Leader:   false,
-				LastSeen: time.Now().Add(-5 * time.Minute), // Indica che è stato visto molto tempo fa
-			}
-		}
-		masters = append(masters, masterInfo)
-	}
-
-	// Se non ci sono master configurati, restituisce dati di fallback
-	if len(masters) == 0 {
-		masters = []MasterInfo{
-			{
-				ID:       "master-0",
-				Role:     "unknown",
-				State:    "not_configured",
-				Leader:   false,
-				LastSeen: time.Now().Add(-10 * time.Minute),
-			},
-		}
-	}
-
-	return masters, nil
-}
-
-// queryWorkerInfo interroga un master specifico per ottenere le informazioni sui worker
-func (d *Dashboard) queryWorkerInfo(masterID int, rpcAddr string) (WorkerInfoReply, error) {
-	// Debug: stampa l'indirizzo che stiamo tentando di contattare
-	LogInfo("[Dashboard] Attempting to get worker info from master %d at %s", masterID, rpcAddr)
-
-	// Crea una connessione RPC al master
-	client, err := rpc.DialHTTP("tcp", rpcAddr)
-	if err != nil {
-		LogWarn("[Dashboard] Failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
-		return WorkerInfoReply{}, fmt.Errorf("failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
-	}
-	defer client.Close()
-
-	// Prepara la richiesta
-	var args GetWorkerInfoArgs
-	var reply WorkerInfoReply
-
-	// Chiama il metodo RPC con timeout
-	done := make(chan error, 1)
-	go func() {
-		done <- client.Call("Master.GetWorkerInfo", &args, &reply)
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return WorkerInfoReply{}, fmt.Errorf("RPC call failed: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		return WorkerInfoReply{}, fmt.Errorf("RPC call timeout")
-	}
-
-	LogInfo("[Dashboard] Got worker info from master %d: %d workers", masterID, len(reply.Workers))
-	return reply, nil
-}
-
-// queryMasterInfo interroga un master specifico per ottenere le sue informazioni
-func (d *Dashboard) queryMasterInfo(masterID int, rpcAddr string) (MasterInfo, error) {
-	// Debug: stampa l'indirizzo che stiamo tentando di contattare
-	LogInfo("[Dashboard] Attempting to connect to master %d at %s", masterID, rpcAddr)
-
-	// Crea una connessione RPC al master
-	client, err := rpc.DialHTTP("tcp", rpcAddr)
-	if err != nil {
-		LogWarn("[Dashboard] Failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
-		return MasterInfo{}, fmt.Errorf("failed to connect to master %d at %s: %v", masterID, rpcAddr, err)
-	}
-	defer client.Close()
-
-	// Prepara la richiesta
-	var args GetMasterInfoArgs
-	var reply MasterInfoReply
-
-	// Chiama il metodo RPC con timeout
-	done := make(chan error, 1)
-	go func() {
-		done <- client.Call("Master.GetMasterInfo", &args, &reply)
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return MasterInfo{}, fmt.Errorf("RPC call failed: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		return MasterInfo{}, fmt.Errorf("RPC call timeout")
-	}
-
-	// Converti la risposta in MasterInfo
-	role := "follower"
-	state := reply.RaftState
-	if reply.IsLeader {
-		role = "leader"
-		state = "leader"
-	}
-
-	return MasterInfo{
-		ID:       fmt.Sprintf("master-%d", masterID),
-		Role:     role,
-		State:    state,
-		Leader:   reply.IsLeader,
-		LastSeen: reply.LastSeen,
-	}, nil
+	// Per ora restituisce una lista vuota - i master reali saranno implementati
+	// quando il master avrà i metodi appropriati
+	return []MasterInfo{}, nil
 }
 
 // Start avvia il server web
@@ -741,42 +509,10 @@ func (d *Dashboard) GetWorker() *WorkerInfo {
 func (d *Dashboard) getJobDetails(c *gin.Context) {
 	jobID := c.Param("id")
 
-	// Simula dettagli del job
-	details := map[string]interface{}{
-		"id":       jobID,
-		"status":   "running",
-		"phase":    "Map",
-		"progress": 65.5,
-		"map_tasks": map[string]interface{}{
-			"total":       10,
-			"completed":   7,
-			"in_progress": 2,
-			"failed":      1,
-		},
-		"reduce_tasks": map[string]interface{}{
-			"total":       5,
-			"completed":   0,
-			"in_progress": 0,
-			"failed":      0,
-		},
-		"input_files":          []string{"input1.txt", "input2.txt", "input3.txt"},
-		"output_files":         []string{},
-		"start_time":           time.Now().Add(-5 * time.Minute),
-		"estimated_completion": time.Now().Add(2 * time.Minute),
-		"worker_assignments": map[string]interface{}{
-			"worker-1": []int{0, 1, 2},
-			"worker-2": []int{3, 4, 5},
-			"worker-3": []int{6, 7, 8},
-		},
-		"error_log": []string{
-			"MapTask 9 failed: timeout after 15 seconds",
-		},
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": fmt.Sprintf("Job %s details retrieved", jobID),
-		"data":    details,
+	// Per ora restituisce un messaggio di non implementato
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error":  "Job details not yet implemented",
+		"job_id": jobID,
 	})
 }
 
@@ -784,12 +520,10 @@ func (d *Dashboard) getJobDetails(c *gin.Context) {
 func (d *Dashboard) pauseJob(c *gin.Context) {
 	jobID := c.Param("id")
 
-	// Simula pausa del job
-	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"message":   fmt.Sprintf("Job %s paused successfully", jobID),
-		"action":    "pause",
-		"timestamp": time.Now(),
+	// Per ora restituisce un messaggio di non implementato
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error":  "Job pause not yet implemented",
+		"job_id": jobID,
 	})
 }
 
@@ -797,12 +531,10 @@ func (d *Dashboard) pauseJob(c *gin.Context) {
 func (d *Dashboard) resumeJob(c *gin.Context) {
 	jobID := c.Param("id")
 
-	// Simula ripresa del job
-	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"message":   fmt.Sprintf("Job %s resumed successfully", jobID),
-		"action":    "resume",
-		"timestamp": time.Now(),
+	// Per ora restituisce un messaggio di non implementato
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error":  "Job resume not yet implemented",
+		"job_id": jobID,
 	})
 }
 
@@ -810,12 +542,10 @@ func (d *Dashboard) resumeJob(c *gin.Context) {
 func (d *Dashboard) cancelJob(c *gin.Context) {
 	jobID := c.Param("id")
 
-	// Simula cancellazione del job
-	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"message":   fmt.Sprintf("Job %s cancelled successfully", jobID),
-		"action":    "cancel",
-		"timestamp": time.Now(),
+	// Per ora restituisce un messaggio di non implementato
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error":  "Job cancel not yet implemented",
+		"job_id": jobID,
 	})
 }
 
