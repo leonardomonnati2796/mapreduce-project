@@ -10,47 +10,47 @@ import (
 // PrometheusMetrics gestisce tutte le metriche Prometheus per il dashboard
 type PrometheusMetrics struct {
 	// Metriche del dashboard
-	DashboardUptime        prometheus.Gauge
+	DashboardUptime       prometheus.Gauge
 	DashboardRequests     prometheus.Counter
 	DashboardErrors       prometheus.Counter
 	DashboardResponseTime prometheus.Histogram
-	
+
 	// Metriche WebSocket
-	WebSocketConnections  prometheus.Gauge
-	WebSocketMessages     prometheus.Counter
-	WebSocketErrors       prometheus.Counter
-	
+	WebSocketConnections prometheus.Gauge
+	WebSocketMessages    prometheus.Counter
+	WebSocketErrors      prometheus.Counter
+
 	// Metriche di cache
-	CacheHits             prometheus.Counter
-	CacheMisses           prometheus.Counter
-	CacheSize             prometheus.Gauge
-	
+	CacheHits   prometheus.Counter
+	CacheMisses prometheus.Counter
+	CacheSize   prometheus.Gauge
+
 	// Metriche di performance
-	DataCollectionTime    prometheus.Histogram
-	MemoryPoolUsage       prometheus.Gauge
-	ConcurrentRequests    prometheus.Gauge
-	
+	DataCollectionTime prometheus.Histogram
+	MemoryPoolUsage    prometheus.Gauge
+	ConcurrentRequests prometheus.Gauge
+
 	// Metriche del sistema
-	SystemHealth          prometheus.Gauge
-	LoadBalancerHealth    prometheus.Gauge
-	S3Health              prometheus.Gauge
-	
+	SystemHealth       prometheus.Gauge
+	LoadBalancerHealth prometheus.Gauge
+	S3Health           prometheus.Gauge
+
 	// Metriche dei job
-	JobsTotal             prometheus.Counter
-	JobsActive            prometheus.Gauge
-	JobsCompleted         prometheus.Counter
-	JobsFailed            prometheus.Counter
-	
+	JobsTotal     prometheus.Counter
+	JobsActive    prometheus.Gauge
+	JobsCompleted prometheus.Counter
+	JobsFailed    prometheus.Counter
+
 	// Metriche dei worker
-	WorkersTotal          prometheus.Gauge
-	WorkersActive         prometheus.Gauge
-	WorkersDegraded       prometheus.Gauge
-	WorkersFailed         prometheus.Gauge
-	
+	WorkersTotal    prometheus.Gauge
+	WorkersActive   prometheus.Gauge
+	WorkersDegraded prometheus.Gauge
+	WorkersFailed   prometheus.Gauge
+
 	// Metriche dei master
-	MastersTotal          prometheus.Gauge
-	MastersActive         prometheus.Gauge
-	MastersLeader         prometheus.Gauge
+	MastersTotal  prometheus.Gauge
+	MastersActive prometheus.Gauge
+	MastersLeader prometheus.Gauge
 }
 
 // NewPrometheusMetrics crea una nuova istanza delle metriche Prometheus
@@ -74,7 +74,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Help:    "Tempo di risposta del dashboard in secondi",
 			Buckets: prometheus.DefBuckets,
 		}),
-		
+
 		// Metriche WebSocket
 		WebSocketConnections: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "websocket_connections_active",
@@ -88,7 +88,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "websocket_errors_total",
 			Help: "Numero totale di errori WebSocket",
 		}),
-		
+
 		// Metriche di cache
 		CacheHits: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "cache_hits_total",
@@ -102,7 +102,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "cache_size_bytes",
 			Help: "Dimensione della cache in bytes",
 		}),
-		
+
 		// Metriche di performance
 		DataCollectionTime: promauto.NewHistogram(prometheus.HistogramOpts{
 			Name:    "data_collection_time_seconds",
@@ -117,7 +117,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "concurrent_requests",
 			Help: "Numero di richieste concorrenti",
 		}),
-		
+
 		// Metriche del sistema
 		SystemHealth: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "system_health_status",
@@ -131,7 +131,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "s3_health_status",
 			Help: "Stato di salute di S3 (1=healthy, 0=unhealthy)",
 		}),
-		
+
 		// Metriche dei job
 		JobsTotal: promauto.NewCounter(prometheus.CounterOpts{
 			Name: "jobs_total",
@@ -149,7 +149,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "jobs_failed_total",
 			Help: "Numero totale di job falliti",
 		}),
-		
+
 		// Metriche dei worker
 		WorkersTotal: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "workers_total",
@@ -167,7 +167,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "workers_failed",
 			Help: "Numero di worker falliti",
 		}),
-		
+
 		// Metriche dei master
 		MastersTotal: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "masters_total",
@@ -220,13 +220,13 @@ func (pm *PrometheusMetrics) UpdateSystemMetrics(systemHealthy, lbHealthy, s3Hea
 	} else {
 		pm.SystemHealth.Set(0)
 	}
-	
+
 	if lbHealthy {
 		pm.LoadBalancerHealth.Set(1)
 	} else {
 		pm.LoadBalancerHealth.Set(0)
 	}
-	
+
 	if s3Healthy {
 		pm.S3Health.Set(1)
 	} else {

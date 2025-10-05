@@ -37,6 +37,12 @@ type LogCommand struct {
 	RpcAddress  string `json:"rpc_address,omitempty"`
 	ClusterInfo string `json:"cluster_info,omitempty"`
 }
+
+// TaskKey identifica un task con ID e tipo
+type TaskKey struct {
+	ID   int
+	Type TaskType
+}
 type Master struct {
 	mu              sync.RWMutex
 	raft            *raft.Raft
@@ -57,6 +63,10 @@ type Master struct {
 	workers         map[string]*WorkerInfo // Worker ID -> WorkerInfo
 	workerLastSeen  map[string]time.Time   // Worker ID -> Last seen time
 	workerHeartbeat map[string]time.Time   // Worker ID -> Last heartbeat time
+	// Mappa worker->task correnti (solo InProgress)
+	workerToTasks map[string]map[TaskKey]bool // workerID -> set di task con tipo
+	// Checkpoint dei reducer da usare alla prossima riassegnazione
+	reducerCheckpoint map[int]string // reduceTaskID -> checkpoint path
 }
 
 func (m *Master) Apply(logEntry *raft.Log) interface{} {
@@ -550,6 +560,12 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 			m.workerLastSeen[workerID] = time.Now()
 			m.workers[workerID].LastSeen = time.Now()
 			LogDebug("[Master] Worker %s tracciato, ultimo visto: %v", workerID, time.Now())
+
+			// Registra il task assegnato per questo worker
+			if m.workerToTasks[workerID] == nil {
+				m.workerToTasks[workerID] = make(map[TaskKey]bool)
+			}
+			m.workerToTasks[workerID][TaskKey{ID: taskToDo.TaskID, Type: taskToDo.Type}] = true
 		}
 	} else {
 		*reply = Task{Type: NoTask}
@@ -613,11 +629,17 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 
 	LogInfo("[Master] TaskCompleted applicato con successo: %s TaskID=%d", op, args.TaskID)
 
-	// Aggiorna il conteggio dei task completati solo per il worker specifico
+	// Aggiorna contatori e deregistra il task dal worker
 	if args.WorkerID != "" {
 		if worker, exists := m.workers[args.WorkerID]; exists {
 			worker.TasksDone++
 			worker.LastSeen = time.Now()
+			if m.workerToTasks[args.WorkerID] != nil {
+				delete(m.workerToTasks[args.WorkerID], TaskKey{ID: args.TaskID, Type: args.Type})
+				if len(m.workerToTasks[args.WorkerID]) == 0 {
+					delete(m.workerToTasks, args.WorkerID)
+				}
+			}
 			LogInfo("[Master] Worker %s ha completato il task, totale task completati: %d", args.WorkerID, worker.TasksDone)
 		} else {
 			LogWarn("[Master] Worker %s non trovato nella mappa dei worker", args.WorkerID)
@@ -626,6 +648,85 @@ func (m *Master) TaskCompleted(args *TaskCompletedArgs, reply *Reply) error {
 		LogWarn("[Master] Worker ID non fornito nel TaskCompleted")
 	}
 
+	return nil
+}
+
+// ResetTask è un metodo RPC che forza il reset di un task specifico, permettendone
+// la riassegnazione immediata. Il reset viene serializzato tramite Raft per consistenza.
+func (m *Master) ResetTask(args *ResetTaskArgs, reply *Reply) error {
+	if m.raft.State() != raft.Leader {
+		return fmt.Errorf("non sono il leader")
+	}
+	if args.TaskID < 0 {
+		return fmt.Errorf("task id invalido")
+	}
+	// Applica il reset tramite Raft per consistenza
+	cmd := LogCommand{Operation: "reset-task", TaskID: args.TaskID}
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	if err := m.raft.Apply(cmdBytes, 2*time.Second).Error(); err != nil {
+		return err
+	}
+	LogWarn("[Master] ResetTask RPC: %v task=%d reason=%s", args.Type, args.TaskID, args.Reason)
+	// Best-effort: rimuovi il task dalla mappa worker->tasks (potrebbe essere stato riassegnato)
+	for w := range m.workerToTasks {
+		if m.workerToTasks[w][TaskKey{ID: args.TaskID, Type: args.Type}] {
+			delete(m.workerToTasks[w], TaskKey{ID: args.TaskID, Type: args.Type})
+			if len(m.workerToTasks[w]) == 0 {
+				delete(m.workerToTasks, w)
+			}
+		}
+	}
+	// Se è un ReduceTask e la reason contiene checkpoint=..., memorizza il percorso
+	if args.Type == ReduceTask {
+		if m.reducerCheckpoint == nil {
+			m.reducerCheckpoint = make(map[int]string)
+		}
+		const key = "checkpoint="
+		if idx := strings.Index(args.Reason, key); idx >= 0 {
+			cp := strings.TrimSpace(args.Reason[idx+len(key):])
+			if cp != "" {
+				m.reducerCheckpoint[args.TaskID] = cp
+				LogInfo("[Master] Registrato checkpoint per ReduceTask %d: %s", args.TaskID, cp)
+			}
+		}
+	}
+	return nil
+}
+
+// PublicResetTask è un endpoint pubblico: può essere chiamato su qualsiasi master.
+// Se il nodo non è leader, inoltra la richiesta al leader e restituisce l'esito.
+func (m *Master) PublicResetTask(args *ResetTaskArgs, reply *Reply) error {
+	if m.raft.State() == raft.Leader {
+		return m.ResetTask(args, reply)
+	}
+
+	// Inoltra al leader
+	leaderRaftAddr := string(m.raft.Leader())
+	if leaderRaftAddr == "" {
+		return fmt.Errorf("leader non disponibile")
+	}
+
+	// Mappa raft address -> rpc address
+	rpcAddr := m.clusterMembers[leaderRaftAddr]
+	if rpcAddr == "" {
+		// fallback: prova stesso indirizzo
+		rpcAddr = leaderRaftAddr
+	}
+
+	client, err := rpc.DialHTTP("tcp", rpcAddr)
+	if err != nil {
+		return fmt.Errorf("connessione leader fallita: %v", err)
+	}
+	defer client.Close()
+
+	var fwdReply Reply
+	if err := client.Call("Master.ResetTask", args, &fwdReply); err != nil {
+		return err
+	}
+	*reply = fwdReply
 	return nil
 }
 func (m *Master) Done() bool {
@@ -747,6 +848,7 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 		workers:         make(map[string]*WorkerInfo),
 		workerLastSeen:  make(map[string]time.Time),
 		workerHeartbeat: make(map[string]time.Time),
+		workerToTasks:   make(map[string]map[TaskKey]bool),
 	}
 
 	// Popola la mappa dei membri del cluster
@@ -803,6 +905,9 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	}
 	m.mu.Unlock()
 	LogInfo("[Master %d] Reset stato PRIMA di Raft: isDone=%v, phase=%v", me, m.isDone, m.phase)
+
+	// Pulisci i file precedenti all'avvio
+	m.cleanupPreviousJobFiles()
 	logStore, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(raftDir, "log.db")})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log store: %s", err)
@@ -897,16 +1002,27 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	rpc.HandleHTTP()
 
 	go func() {
-		// Per Docker, usa 0.0.0.0 invece di localhost per permettere connessioni da altri container
-		listenAddr := rpcAddrs[me]
-		if os.Getenv("DOCKER_ENV") == "true" || os.Getenv("RAFT_ADDRESSES") != "" {
-			// Se siamo in Docker, sostituisci localhost con 0.0.0.0
-			listenAddr = strings.Replace(listenAddr, "localhost", "0.0.0.0", 1)
-			// Se l'indirizzo inizia solo con :, aggiungi 0.0.0.0
-			if strings.HasPrefix(listenAddr, ":") {
-				listenAddr = "0.0.0.0" + listenAddr
+		// Get network configuration
+		networkConfig := GetNetworkConfig()
+
+		// Use dynamic network configuration
+		var listenAddr string
+		if networkConfig.IsAWS() && len(networkConfig.RpcAddresses) > me {
+			listenAddr = networkConfig.RpcAddresses[me]
+		} else {
+			// Fallback to original logic for local development
+			listenAddr = rpcAddrs[me]
+			if os.Getenv("DOCKER_ENV") == "true" || os.Getenv("RAFT_ADDRESSES") != "" {
+				// Se siamo in Docker, sostituisci localhost con 0.0.0.0
+				listenAddr = strings.Replace(listenAddr, "localhost", "0.0.0.0", 1)
 			}
 		}
+
+		// Se l'indirizzo inizia solo con :, aggiungi 0.0.0.0
+		if strings.HasPrefix(listenAddr, ":") {
+			listenAddr = "0.0.0.0" + listenAddr
+		}
+
 		LogInfo("[Master %d] Starting RPC server on %s", me, listenAddr)
 		l, e := net.Listen("tcp", listenAddr)
 		if e != nil {
@@ -1120,6 +1236,9 @@ func (m *Master) SubmitJob(args *SubmitJobArgs, reply *SubmitJobReply) error {
 		m.phase = MapPhase
 		m.mapTasksDone = 0
 		m.reduceTasksDone = 0
+
+		// Pulisci i file precedenti prima di iniziare il nuovo job
+		m.cleanupPreviousJobFiles()
 	}
 
 	// Aggiorna i parametri del job
@@ -1147,6 +1266,31 @@ func (m *Master) SubmitJob(args *SubmitJobArgs, reply *SubmitJobReply) error {
 	}
 
 	return nil
+}
+
+// cleanupPreviousJobFiles pulisce i file precedenti prima di iniziare un nuovo job
+func (m *Master) cleanupPreviousJobFiles() {
+	LogInfo("[Master] Pulizia file precedenti...")
+
+	// Pulisci i file di output precedenti usando il numero di reducer corretto
+	for i := 0; i < m.nReduce; i++ {
+		outputFile := getOutputFileName(i)
+		if err := os.Remove(outputFile); err != nil && !os.IsNotExist(err) {
+			LogWarn("[Master] Errore rimozione file output %s: %v", outputFile, err)
+		}
+	}
+
+	// Pulisci i file intermedi precedenti usando il numero di reducer corretto
+	for i := 0; i < len(m.inputFiles); i++ {
+		for j := 0; j < m.nReduce; j++ {
+			intermediateFile := getIntermediateFileName(i, j)
+			if err := os.Remove(intermediateFile); err != nil && !os.IsNotExist(err) {
+				LogWarn("[Master] Errore rimozione file intermedio %s: %v", intermediateFile, err)
+			}
+		}
+	}
+
+	LogInfo("[Master] Pulizia file precedenti completata")
 }
 
 // copyOutputFilesToLocal copia i file di output dal volume Docker alla cartella locale data/output/
@@ -1536,6 +1680,23 @@ func (m *Master) GetWorkerInfo(args *GetWorkerInfoArgs, reply *WorkerInfoReply) 
 	return nil
 }
 
+// GetWorkerTasks RPC: restituisce i task correnti (InProgress) per un worker
+func (m *Master) GetWorkerTasks(args *GetWorkerTasksArgs, reply *GetWorkerTasksReply) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	set := m.workerToTasks[strings.TrimSpace(args.WorkerID)]
+	if set == nil {
+		reply.Tasks = nil
+		return nil
+	}
+	tasks := make([]WorkerTask, 0, len(set))
+	for tk := range set {
+		tasks = append(tasks, WorkerTask{TaskID: tk.ID, Type: tk.Type})
+	}
+	reply.Tasks = tasks
+	return nil
+}
+
 // GetWorkerCount restituisce il numero di worker attivi tramite RPC
 func (m *Master) GetWorkerCount(args *GetWorkerCountArgs, reply *WorkerCountReply) error {
 	m.mu.RLock()
@@ -1679,7 +1840,7 @@ func (m *Master) GetJobInfo() []JobInfo {
 	// Crea un job principale basato sullo stato del master
 	jobID := "main-job"
 	status := "running"
-	phase := string(m.phase)
+	phase := fmt.Sprint(m.phase)
 
 	if m.isDone {
 		status = "completed"
@@ -1700,10 +1861,7 @@ func (m *Master) GetJobInfo() []JobInfo {
 	}
 
 	// Calcola la durata (usa tempo di creazione come approssimazione)
-	var duration time.Duration
-	// Per ora usiamo una durata fissa - in un'implementazione reale
-	// dovresti tracciare il tempo di inizio del job
-	duration = 0
+	var duration time.Duration = 0
 
 	job := JobInfo{
 		ID:          jobID,
@@ -1892,7 +2050,7 @@ func (m *Master) GetTaskMetrics() map[string]interface{} {
 			"failed":      reduceTaskCounts[Failed],
 		},
 		"overall": map[string]interface{}{
-			"phase":          string(m.phase),
+			"phase":          fmt.Sprint(m.phase),
 			"is_done":        m.isDone,
 			"total_workers":  len(m.workers),
 			"active_workers": m.getActiveWorkerCount(),

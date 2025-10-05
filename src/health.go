@@ -444,7 +444,7 @@ func CheckSystemResources() (bool, string, map[string]string) {
 func CheckSecurityStatus() (bool, string, map[string]string) {
 	// Verifica certificati SSL (mock)
 	sslExpiry := time.Now().Add(30 * 24 * time.Hour) // 30 giorni
-	daysUntilExpiry := int(sslExpiry.Sub(time.Now()).Hours() / 24)
+	daysUntilExpiry := int(time.Until(sslExpiry).Hours() / 24)
 
 	// Verifica firewall (mock)
 	firewallActive := true

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/rpc"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +58,11 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		LogError("ERRORE: Nessun master configurato!")
 		return
 	}
+
+	// Log network configuration for debugging
+	networkConfig := GetNetworkConfig()
+	LogInfo("Worker network config - Environment: %s, Local Mode: %v", networkConfig.DeploymentEnv, networkConfig.LocalMode)
+	LogInfo("Worker connecting to masters: %v", rpcAddrs)
 
 	LogInfo("Worker connesso a %d master: %v", len(rpcAddrs), rpcAddrs)
 
@@ -224,40 +230,113 @@ func executeMapTask(task *Task, mapf func(string, string) []KeyValue) {
 func executeReduceTask(task *Task, reducef func(string, []string) string) {
 	LogInfo("Eseguendo ReduceTask %d", task.TaskID)
 
-	// Raccoglie tutti i valori per ogni chiave
-	keyValues := make(map[string][]string)
+	// 1) Carica eventuale checkpoint
+	baseOut := getOutputFileName(task.TaskID)
+	partialOut := baseOut + ".partial"
+	checkpointFile := baseOut + ".checkpoint.json"
+	if task.Checkpoint != "" {
+		checkpointFile = task.Checkpoint
+		LogInfo("ReduceTask %d: ripresa da checkpoint fornito: %s", task.TaskID, checkpointFile)
+	}
+	ck := loadReduceCheckpoint(checkpointFile) // {LastKey string, Processed int}
 
-	// Legge tutti i file intermedi per questo task di riduzione
+	// 2) Aggrega input
+	keyValues := make(map[string][]string)
 	for mapTaskID := 0; mapTaskID < task.NMap; mapTaskID++ {
 		filename := getIntermediateFileName(mapTaskID, task.TaskID)
 		file, err := os.Open(filename)
 		if err != nil {
-			continue // File non esiste o errore, continua
+			continue
 		}
-
-		decoder := json.NewDecoder(file)
+		dec := json.NewDecoder(file)
 		for {
 			var kv KeyValue
-			if err := decoder.Decode(&kv); err != nil {
-				break // Fine file o errore
+			if err := dec.Decode(&kv); err != nil {
+				break
 			}
 			keyValues[kv.Key] = append(keyValues[kv.Key], kv.Value)
 		}
 		file.Close()
 	}
 
-	// Applica la funzione di riduzione
-	var results []string
-	for key, values := range keyValues {
-		result := reducef(key, values)
-		results = append(results, fmt.Sprintf("%s %s", key, result))
+	// Ordina le chiavi per avere ordine deterministico e poter riprendere dal checkpoint
+	keys := make([]string, 0, len(keyValues))
+	for k := range keyValues {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// 3) Scrive su partial e aggiorna checkpoint ogni 100 chiavi
+	out, err := os.Create(partialOut)
+	if err != nil {
+		LogError("Errore creazione partial %s: %v", partialOut, err)
+		return
 	}
 
-	// Scrive il file di output
-	outputFile := getOutputFileName(task.TaskID)
-	writeStringsToFile(outputFile, results)
+	processed := 0
+	for _, key := range keys {
+		// riprendi dal checkpoint se presente
+		if ck.LastKey != "" && key <= ck.LastKey {
+			continue
+		}
+		values := keyValues[key]
+		res := reducef(key, values)
+		fmt.Fprintf(out, "%s %s\n", key, res)
+		processed++
+		if processed%100 == 0 {
+			saveReduceCheckpoint(checkpointFile, key, processed)
+		}
+	}
+	// checkpoint finale
+	saveReduceCheckpoint(checkpointFile, "", processed)
 
-	LogInfo("ReduceTask %d completato, scritti %d record", task.TaskID, len(results))
+	// Chiudi il file prima del rename (necessario su Windows)
+	if err := out.Close(); err != nil {
+		LogError("Errore chiusura partial %s: %v", partialOut, err)
+	}
+
+	// 4) Rinomina in definitivo
+	if err := os.Rename(partialOut, baseOut); err != nil {
+		LogError("Rename %s -> %s fallito: %v", partialOut, baseOut, err)
+		return
+	}
+	// pulizia checkpoint
+	_ = os.Remove(checkpointFile)
+
+	LogInfo("ReduceTask %d completato, scritti %d record", task.TaskID, processed)
+}
+
+// Strutture e funzioni di supporto per checkpoint reduce
+type reduceCheckpoint struct {
+	LastKey   string `json:"last_key"`
+	Processed int    `json:"processed"`
+}
+
+func loadReduceCheckpoint(path string) reduceCheckpoint {
+	f, err := os.Open(path)
+	if err != nil {
+		return reduceCheckpoint{}
+	}
+	defer f.Close()
+	var ck reduceCheckpoint
+	dec := json.NewDecoder(f)
+	if err := dec.Decode(&ck); err != nil {
+		return reduceCheckpoint{}
+	}
+	return ck
+}
+
+func saveReduceCheckpoint(path, lastKey string, processed int) {
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		LogError("Errore salvataggio checkpoint %s: %v", path, err)
+		return
+	}
+	enc := json.NewEncoder(f)
+	_ = enc.Encode(reduceCheckpoint{LastKey: lastKey, Processed: processed})
+	f.Close()
+	_ = os.Rename(tmp, path)
 }
 
 // reportTaskCompletion segnala il completamento del task al master

@@ -70,6 +70,61 @@ variable "desired_instances" {
   default     = 3
 }
 
+# New: separate scaling for masters and workers
+variable "masters_min" {
+  description = "Minimum number of master instances"
+  type        = number
+  default     = 3
+}
+
+variable "masters_desired" {
+  description = "Desired number of master instances"
+  type        = number
+  default     = 3
+}
+
+variable "masters_max" {
+  description = "Maximum number of master instances"
+  type        = number
+  default     = 3
+}
+
+variable "workers_min" {
+  description = "Minimum number of worker instances"
+  type        = number
+  default     = 2
+}
+
+variable "workers_desired" {
+  description = "Desired number of worker instances"
+  type        = number
+  default     = 3
+}
+
+variable "workers_max" {
+  description = "Maximum number of worker instances"
+  type        = number
+  default     = 10
+}
+
+variable "instance_role_tag_key" {
+  description = "Tag key to indicate instance role"
+  type        = string
+  default     = "INSTANCE_ROLE"
+}
+
+variable "master_compose_file" {
+  description = "Compose file to run on master instances"
+  type        = string
+  default     = "aws/docker/docker-compose.master.yml"
+}
+
+variable "worker_compose_file" {
+  description = "Compose file to run on worker instances"
+  type        = string
+  default     = "aws/docker/docker-compose.worker.yml"
+}
+
 variable "key_pair_name" {
   description = "Name of the EC2 key pair"
   type        = string

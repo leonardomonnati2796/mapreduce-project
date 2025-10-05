@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  mapreduce-master:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.aws
+      args:
+        - BUILD_TARGET=master
+    image: mapreduce-master:${DOCKER_IMAGE_TAG:-latest}
+    container_name: mapreduce-master
+    restart: unless-stopped
+    ports:
+      - "${MASTER_PORT:-8082}:8082"
+      - "${DASHBOARD_PORT:-3000}:3000"
+    environment:
+      - NODE_ROLE=master
+      - MASTER_PORT=${MASTER_PORT:-8082}
+      - DASHBOARD_PORT=${DASHBOARD_PORT:-3000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BUCKET_NAME}
+      # Service Discovery - Dynamic IPs from user_data.sh
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      # Environment detection
+      - DEPLOYMENT_ENV=aws
+      - LOCAL_MODE=false
+    volumes:
+      - /var/log/mapreduce:/app/logs
+      - /tmp/mapreduce:/tmp/mapreduce
+    networks:
+      - mapreduce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${MASTER_PORT:-8082}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  nginx:
+    image: nginx:alpine
+    container_name: mapreduce-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - /var/log/nginx:/var/log/nginx
+    networks:
+      - mapreduce-network
+    depends_on:
+      - mapreduce-master
+
+  cloudwatch-agent:
+    image: amazon/cloudwatch-agent:latest
+    container_name: mapreduce-cloudwatch
+    restart: unless-stopped
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - LOG_GROUP_NAME=${CLOUDWATCH_LOG_GROUP:-/aws/ec2/mapreduce}
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./cloudwatch-config.json:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json:ro
+    networks:
+      - mapreduce-network
+
+  s3-backup:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.aws
+      args:
+        - BUILD_TARGET=backup
+    image: mapreduce-backup:${DOCKER_IMAGE_TAG:-latest}
+    container_name: mapreduce-backup
+    restart: unless-stopped
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BACKUP_BUCKET}
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - /var/log/mapreduce:/app/logs
+      - /tmp/mapreduce:/tmp/mapreduce
+    networks:
+      - mapreduce-network
+    depends_on:
+      - mapreduce-master
+
+networks:
+  mapreduce-network:
+    driver: bridge
+
+

@@ -212,7 +212,8 @@ copy_output() {
     echo "Ricerca e copia file di output..."
     COPIED_FILES=0
     
-    for i in {0..9}; do
+    # Usa il numero di reducer corretto (3) invece di hardcoded 9
+    for i in {0..2}; do
         if docker exec "$WORKER_CONTAINER" test -f "/tmp/mapreduce/mr-out-$i" 2>/dev/null; then
             if docker cp "$WORKER_CONTAINER:/tmp/mapreduce/mr-out-$i" "data/output/mr-out-$i"; then
                 print_color $GREEN "File copiato: mr-out-$i"

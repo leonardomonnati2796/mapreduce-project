@@ -34,18 +34,9 @@ const (
 	MapValueCount = "1"
 
 	// Default paths
-	DefaultDashboardPort = 8080
-	DefaultTempPath      = "temp-local"
-	DefaultOutputPath    = "output"
-	DefaultRaftDataPath  = "raft-data"
-
-	// Default network addresses
-	DefaultRaftPort1 = "localhost:1234"
-	DefaultRaftPort2 = "localhost:1235"
-	DefaultRaftPort3 = "localhost:1236"
-	DefaultRpcPort1  = "localhost:8000"
-	DefaultRpcPort2  = "localhost:8001"
-	DefaultRpcPort3  = "localhost:8002"
+	DefaultTempPath     = "temp-local"
+	DefaultOutputPath   = "output"
+	DefaultRaftDataPath = "raft-data"
 )
 
 // Job phases

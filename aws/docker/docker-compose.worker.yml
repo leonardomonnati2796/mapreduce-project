@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  mapreduce-worker:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.aws
+      args:
+        - BUILD_TARGET=worker
+    image: mapreduce-worker:${DOCKER_IMAGE_TAG:-latest}
+    container_name: mapreduce-worker
+    restart: unless-stopped
+    ports:
+      - "${WORKER_PORT:-8081}:8081"
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_PORT=${WORKER_PORT:-8081}
+      - MASTER_HOST=${MASTER_HOST:-mapreduce-master}
+      - MASTER_PORT=${MASTER_PORT:-8082}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BUCKET_NAME}
+      # Service Discovery - Dynamic IPs from user_data.sh
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      # Environment detection
+      - DEPLOYMENT_ENV=aws
+      - LOCAL_MODE=false
+    volumes:
+      - /var/log/mapreduce:/app/logs
+      - /tmp/mapreduce:/tmp/mapreduce
+    networks:
+      - mapreduce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${WORKER_PORT:-8081}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  cloudwatch-agent:
+    image: amazon/cloudwatch-agent:latest
+    container_name: mapreduce-cloudwatch
+    restart: unless-stopped
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - LOG_GROUP_NAME=${CLOUDWATCH_LOG_GROUP:-/aws/ec2/mapreduce}
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./cloudwatch-config.json:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json:ro
+    networks:
+      - mapreduce-network
+
+networks:
+  mapreduce-network:
+    driver: bridge
+
+

@@ -54,13 +54,90 @@ cd /opt/app
 docker build -f docker/Dockerfile.aws -t mapreduce-master:latest --build-arg BUILD_TARGET=master .
 docker build -f docker/Dockerfile.aws -t mapreduce-worker:latest --build-arg BUILD_TARGET=worker .
 
-# Use production docker-compose
+# Use role-based docker-compose
 cd /opt/app/aws/docker
 
 # Ensure CloudWatch config is available alongside compose
 cp -f ../../monitoring/cloudwatch-config.json ./cloudwatch-config.json || true
 
-/usr/local/bin/docker-compose -f docker-compose.production.yml up -d
+# Determine instance role from tag injected via userdata/launch template env or default to MASTER
+INSTANCE_ROLE="${INSTANCE_ROLE:-MASTER}"
+echo "Detected INSTANCE_ROLE=$INSTANCE_ROLE"
+
+# Service Discovery: Get IPs of other instances
+echo "Starting service discovery..."
+
+# Get current instance private IP
+MY_PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+echo "My private IP: $MY_PRIVATE_IP"
+
+# Get all master IPs (including current instance if it's a master)
+MASTER_IPS=$(aws ec2 describe-instances \
+  --filters "Name=tag:Project,Values=${PROJECT_NAME:-mapreduce}" \
+           "Name=tag:INSTANCE_ROLE,Values=MASTER" \
+           "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].PrivateIpAddress' \
+  --output text | tr '\t' ',')
+
+# Get all worker IPs
+WORKER_IPS=$(aws ec2 describe-instances \
+  --filters "Name=tag:Project,Values=${PROJECT_NAME:-mapreduce}" \
+           "Name=tag:INSTANCE_ROLE,Values=WORKER" \
+           "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].PrivateIpAddress' \
+  --output text | tr '\t' ',')
+
+echo "Master IPs: $MASTER_IPS"
+echo "Worker IPs: $WORKER_IPS"
+
+# Build RAFT_ADDRESSES dynamically
+RAFT_ADDRESSES=""
+if [ -n "$MASTER_IPS" ]; then
+  for ip in $(echo $MASTER_IPS | tr ',' ' '); do
+    RAFT_ADDRESSES="${RAFT_ADDRESSES}${ip}:1234,"
+  done
+  RAFT_ADDRESSES=${RAFT_ADDRESSES%,} # Remove trailing comma
+fi
+
+# Build RPC_ADDRESSES dynamically  
+RPC_ADDRESSES=""
+if [ -n "$MASTER_IPS" ]; then
+  port=8000
+  for ip in $(echo $MASTER_IPS | tr ',' ' '); do
+    RPC_ADDRESSES="${RPC_ADDRESSES}${ip}:${port},"
+    port=$((port + 1))
+  done
+  RPC_ADDRESSES=${RPC_ADDRESSES%,} # Remove trailing comma
+fi
+
+# Build WORKER_ADDRESSES dynamically
+WORKER_ADDRESSES=""
+if [ -n "$WORKER_IPS" ]; then
+  for ip in $(echo $WORKER_IPS | tr ',' ' '); do
+    WORKER_ADDRESSES="${WORKER_ADDRESSES}${ip}:8081,"
+  done
+  WORKER_ADDRESSES=${WORKER_ADDRESSES%,} # Remove trailing comma
+fi
+
+echo "RAFT_ADDRESSES: $RAFT_ADDRESSES"
+echo "RPC_ADDRESSES: $RPC_ADDRESSES" 
+echo "WORKER_ADDRESSES: $WORKER_ADDRESSES"
+
+# Export environment variables for docker-compose
+export RAFT_ADDRESSES
+export RPC_ADDRESSES
+export WORKER_ADDRESSES
+export MY_PRIVATE_IP
+export MASTER_IPS
+export WORKER_IPS
+
+if [ "$INSTANCE_ROLE" = "MASTER" ]; then
+  COMPOSE_FILE="docker-compose.master.yml"
+else
+  COMPOSE_FILE="docker-compose.worker.yml"
+fi
+
+/usr/local/bin/docker-compose -f "$COMPOSE_FILE" up -d
 
 cat > nginx.conf << 'EOF'
 user nginx;

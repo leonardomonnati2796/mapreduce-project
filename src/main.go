@@ -89,6 +89,12 @@ func runMaster() {
 	raftAddrs := getMasterRaftAddresses()
 	rpcAddrs := getMasterRpcAddresses()
 
+	// Log network configuration for debugging
+	networkConfig := GetNetworkConfig()
+	LogInfo("Master network config - Environment: %s, Local Mode: %v", networkConfig.DeploymentEnv, networkConfig.LocalMode)
+	LogInfo("RAFT addresses: %v", raftAddrs)
+	LogInfo("RPC addresses: %v", rpcAddrs)
+
 	// Calculate dynamic reducer count based on worker count
 	nReduce := calculateDynamicReducerCount()
 	LogInfo("Numero di reducer calcolato dinamicamente: %d", nReduce)

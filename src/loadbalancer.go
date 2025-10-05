@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
+	"net/rpc"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -253,19 +258,16 @@ func (lb *LoadBalancer) startUnifiedHealthChecking() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			// Controlla salute dei server
-			lb.performHealthCheck()
+	for range ticker.C {
+		// Controlla salute dei server
+		lb.performHealthCheck()
 
-			// Controlla salute del sistema (riutilizza funzioni esistenti)
-			lb.systemHealth.CheckComponent("disk_space", CheckDiskSpace)
-			lb.systemHealth.CheckComponent("s3_connection", CheckS3Connection)
-			lb.systemHealth.CheckComponent("raft_cluster", CheckRaftCluster)
-			lb.systemHealth.CheckComponent("docker", CheckDocker)
-			lb.systemHealth.CheckComponent("network", CheckNetworkConnectivity)
-		}
+		// Controlla salute del sistema (riutilizza funzioni esistenti)
+		lb.systemHealth.CheckComponent("disk_space", CheckDiskSpace)
+		lb.systemHealth.CheckComponent("s3_connection", CheckS3Connection)
+		lb.systemHealth.CheckComponent("raft_cluster", CheckRaftCluster)
+		lb.systemHealth.CheckComponent("docker", CheckDocker)
+		lb.systemHealth.CheckComponent("network", CheckNetworkConnectivity)
 	}
 }
 
@@ -569,14 +571,43 @@ func NewServerWithWeight(id, address string, port, weight int) Server {
 
 // CreateDefaultServers crea una lista di server di default per testing
 func CreateDefaultServers() []Server {
-	return []Server{
-		NewServerWithWeight("master-0", "localhost", 8080, 10),
-		NewServerWithWeight("master-1", "localhost", 8081, 10),
-		NewServerWithWeight("master-2", "localhost", 8082, 10),
-		NewServerWithWeight("worker-0", "localhost", 8083, 5),
-		NewServerWithWeight("worker-1", "localhost", 8084, 5),
-		NewServerWithWeight("worker-2", "localhost", 8085, 5),
+	// Get network configuration
+	networkConfig := GetNetworkConfig()
+
+	var servers []Server
+
+	if networkConfig.IsAWS() {
+		// Use dynamic IPs from AWS service discovery
+		for i, ip := range networkConfig.MasterIPs {
+			servers = append(servers, NewServerWithWeight(
+				fmt.Sprintf("master-%d", i),
+				ip,
+				8082, // Master port
+				10,
+			))
+		}
+
+		for i, ip := range networkConfig.WorkerIPs {
+			servers = append(servers, NewServerWithWeight(
+				fmt.Sprintf("worker-%d", i),
+				ip,
+				8081, // Worker port
+				5,
+			))
+		}
+	} else {
+		// Fallback for local development
+		servers = []Server{
+			NewServerWithWeight("master-0", "localhost", 8080, 10),
+			NewServerWithWeight("master-1", "localhost", 8081, 10),
+			NewServerWithWeight("master-2", "localhost", 8082, 10),
+			NewServerWithWeight("worker-0", "localhost", 8083, 5),
+			NewServerWithWeight("worker-1", "localhost", 8084, 5),
+			NewServerWithWeight("worker-2", "localhost", 8085, 5),
+		}
 	}
+
+	return servers
 }
 
 // CreateMasterServers crea server basati sui master RPC addresses
@@ -604,9 +635,19 @@ func CreateWorkerServers(workerMap map[string]WorkerInfo) []Server {
 	for workerID := range workerMap {
 		// Usa una porta di default per i worker (non abbiamo Port nel WorkerInfo di rpc.go)
 		port := 8080 + i // Porta di default
+
+		// Get network configuration for dynamic IPs
+		networkConfig := GetNetworkConfig()
+		var workerIP string
+		if networkConfig.IsAWS() && i < len(networkConfig.WorkerIPs) {
+			workerIP = networkConfig.WorkerIPs[i]
+		} else {
+			workerIP = "localhost" // Fallback for local development
+		}
+
 		servers = append(servers, NewServerWithWeight(
 			workerID,
-			"localhost", // In produzione, usa l'IP reale del worker
+			workerIP,
 			port,
 			5, // Peso minore per i worker
 		))
@@ -693,12 +734,9 @@ func (aft *AdvancedFaultTolerance) startAdvancedMonitoring() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			aft.monitorTaskFailures()
-			aft.checkDataIntegrity()
-		}
+	for range ticker.C {
+		aft.monitorTaskFailures()
+		aft.checkDataIntegrity()
 	}
 }
 
@@ -735,23 +773,23 @@ func (aft *AdvancedFaultTolerance) handleMapperFailure(workerID string) {
 	LogWarn("[FaultTolerance] Gestione fallimento mapper %s", workerID)
 
 	// Verifica se il mapper aveva task in corso
-	tasks := aft.getWorkerTasks(workerID)
+	tasks := aft.getWorkerTasksByType(workerID, MapTask)
 
-	for _, taskID := range tasks {
-		// Verifica se il task era completato
-		if aft.isTaskCompleted(taskID) {
-			// Task completato: verifica se dati sono arrivati al reducer
-			if aft.verifyDataReachedReducer(taskID) {
-				LogInfo("[FaultTolerance] Mapper %s task %d completato, dati arrivati al reducer", workerID, taskID)
+	for _, mapID := range tasks {
+		// Verifica se il map task era completato
+		if aft.isMapTaskCompleted(mapID) {
+			// Task completato: verifica se gli output intermedi sono stati scritti
+			if aft.verifyMapperOutputWritten(mapID) {
+				LogInfo("[FaultTolerance] Mapper %s task %d completato, dati arrivati al reducer", workerID, mapID)
 				// Non serve riavviare il task
 			} else {
-				LogWarn("[FaultTolerance] Mapper %s task %d completato ma dati non arrivati, riavvio task", workerID, taskID)
-				aft.restartTask(taskID, "map")
+				LogWarn("[FaultTolerance] Mapper %s task %d completato ma dati non arrivati, riavvio task", workerID, mapID)
+				aft.restartTask(mapID, "map")
 			}
 		} else {
 			// Task non completato: riavvia
-			LogWarn("[FaultTolerance] Mapper %s task %d non completato, riavvio task", workerID, taskID)
-			aft.restartTask(taskID, "map")
+			LogWarn("[FaultTolerance] Mapper %s task %d non completato, riavvio task", workerID, mapID)
+			aft.restartTask(mapID, "map")
 		}
 	}
 }
@@ -777,7 +815,7 @@ func (aft *AdvancedFaultTolerance) handleReducerFailure(workerID string) {
 	LogWarn("[FaultTolerance] Gestione fallimento reducer %s", workerID)
 
 	// Verifica se il reducer aveva task in corso
-	tasks := aft.getWorkerTasks(workerID)
+	tasks := aft.getWorkerTasksByType(workerID, ReduceTask)
 
 	for _, taskID := range tasks {
 		// Verifica se il reducer aveva ricevuto dati
@@ -817,364 +855,287 @@ func (aft *AdvancedFaultTolerance) isReducer(workerID string) bool {
 }
 
 // getWorkerTasks restituisce i task assegnati a un worker
-func (aft *AdvancedFaultTolerance) getWorkerTasks(workerID string) []int {
-	// Implementazione semplificata: restituisce task mock
-	// In implementazione reale, questo dovrebbe interrogare il master
-	return []int{1, 2, 3} // Mock
+func (aft *AdvancedFaultTolerance) getWorkerTasksByType(workerID string, taskType TaskType) []int {
+	// Interroga il master leader per i task correnti del worker e filtra per tipo
+	rpcAddrs := getMasterRpcAddresses()
+	for _, addr := range rpcAddrs {
+		if client, err := rpc.DialHTTP("tcp", addr); err == nil {
+			var reply GetWorkerTasksReply
+			args := GetWorkerTasksArgs{WorkerID: workerID}
+			if err := client.Call("Master.GetWorkerTasks", &args, &reply); err == nil {
+				client.Close()
+				ids := make([]int, 0, len(reply.Tasks))
+				for _, t := range reply.Tasks {
+					if t.Type == taskType {
+						ids = append(ids, t.TaskID)
+					}
+				}
+				return ids
+			}
+			client.Close()
+		}
+	}
+	return nil
 }
 
 // isTaskCompleted verifica se un task è completato
-func (aft *AdvancedFaultTolerance) isTaskCompleted(taskID int) bool {
-	// Implementazione semplificata: verifica esistenza file di output
-	// In implementazione reale, questo dovrebbe interrogare il master
-	return false // Mock
+// (rimosse funzioni deprecated non utilizzate)
+
+// isMapTaskCompleted verifica se un map task ha prodotto i file intermedi
+func (aft *AdvancedFaultTolerance) isMapTaskCompleted(mapID int) bool {
+	basePath := os.Getenv("TMP_PATH")
+	if basePath == "" {
+		basePath = "."
+	}
+	pattern := filepath.Join(basePath, fmt.Sprintf("mr-intermediate-%d-*", mapID))
+	matches, _ := filepath.Glob(pattern)
+	return len(matches) > 0
 }
 
-// verifyDataReachedReducer verifica se i dati di un mapper sono arrivati al reducer
-func (aft *AdvancedFaultTolerance) verifyDataReachedReducer(taskID int) bool {
-	// Implementazione semplificata: verifica esistenza file intermedi
-	// In implementazione reale, questo dovrebbe verificare i file intermedi
-	return true // Mock
+// verifyMapperOutputWritten verifica che gli intermedi del mapID siano presenti (e opzionalmente validi)
+func (aft *AdvancedFaultTolerance) verifyMapperOutputWritten(mapID int) bool {
+	basePath := os.Getenv("TMP_PATH")
+	if basePath == "" {
+		basePath = "."
+	}
+	pattern := filepath.Join(basePath, fmt.Sprintf("mr-intermediate-%d-*", mapID))
+	matches, _ := filepath.Glob(pattern)
+	if len(matches) == 0 {
+		return false
+	}
+	// Validazione JSON minima
+	for _, file := range matches {
+		f, err := os.Open(file)
+		if err != nil {
+			return false
+		}
+		dec := json.NewDecoder(f)
+		var kv KeyValue
+		hasData := false
+		for dec.More() {
+			if err := dec.Decode(&kv); err != nil {
+				f.Close()
+				return false
+			}
+			hasData = true
+		}
+		f.Close()
+		if !hasData {
+			return false
+		}
+	}
+	return true
 }
 
 // hasReducerReceivedData verifica se un reducer ha ricevuto dati
 func (aft *AdvancedFaultTolerance) hasReducerReceivedData(taskID int) bool {
-	// Implementazione semplificata: verifica esistenza file intermedi per il task
-	// In implementazione reale, questo dovrebbe verificare i file intermedi
-	return true // Mock
+	basePath := os.Getenv("TMP_PATH")
+	if basePath == "" {
+		basePath = "."
+	}
+	pattern := filepath.Join(basePath, fmt.Sprintf("mr-intermediate-*-%d", taskID))
+	matches, _ := filepath.Glob(pattern)
+	if len(matches) == 0 {
+		return false
+	}
+	// Validazione base JSON (come sopra)
+	for _, file := range matches {
+		f, err := os.Open(file)
+		if err != nil {
+			return false
+		}
+		dec := json.NewDecoder(f)
+		var kv KeyValue
+		hasData := false
+		for dec.More() {
+			if err := dec.Decode(&kv); err != nil {
+				f.Close()
+				return false
+			}
+			hasData = true
+		}
+		f.Close()
+		if !hasData {
+			return false
+		}
+	}
+	return true
 }
 
 // hasReducerStartedProcessing verifica se un reducer ha iniziato l'elaborazione
 func (aft *AdvancedFaultTolerance) hasReducerStartedProcessing(taskID int) bool {
-	// Implementazione semplificata: verifica esistenza checkpoint
-	// In implementazione reale, questo dovrebbe verificare i checkpoint
-	return true // Mock
+	out := getOutputFileName(taskID)
+	if _, err := os.Stat(out + ".partial"); err == nil {
+		return true
+	}
+	if _, err := os.Stat(out + ".checkpoint.json"); err == nil {
+		return true
+	}
+	return false
 }
 
 // restartTask riavvia un task
 func (aft *AdvancedFaultTolerance) restartTask(taskID int, taskType string) {
 	LogInfo("[FaultTolerance] Riavvio task %d di tipo %s", taskID, taskType)
-	// Implementazione: notifica al master di riavviare il task
+	// Chiama l'endpoint pubblico: inoltra al leader se necessario
+	rpcAddrs := getMasterRpcAddresses()
+	for _, addr := range rpcAddrs {
+		if client, err := rpc.DialHTTP("tcp", addr); err == nil {
+			var reply Reply
+			args := ResetTaskArgs{TaskID: taskID, Type: MapTask, Reason: "fault tolerance restart"}
+			if taskType == "reduce" {
+				args.Type = ReduceTask
+			}
+			_ = client.Call("Master.PublicResetTask", &args, &reply)
+			client.Close()
+			break
+		}
+	}
 }
 
 // assignSameDataToNewReducer assegna gli stessi dati a un nuovo reducer
 func (aft *AdvancedFaultTolerance) assignSameDataToNewReducer(taskID int) {
 	LogInfo("[FaultTolerance] Assegnazione stessi dati a nuovo reducer per task %d", taskID)
-	// Implementazione: notifica al master di riassegnare il task con gli stessi dati
+	// Notifica al master (endpoint pubblico) di riassegnare il task
+	rpcAddrs := getMasterRpcAddresses()
+	for _, addr := range rpcAddrs {
+		if client, err := rpc.DialHTTP("tcp", addr); err == nil {
+			var reply Reply
+			args := ResetTaskArgs{TaskID: taskID, Type: ReduceTask, Reason: "assign same data to new reducer"}
+			_ = client.Call("Master.PublicResetTask", &args, &reply)
+			client.Close()
+			break
+		}
+	}
 }
 
 // resumeReducerFromCheckpoint fa ripartire un reducer dal checkpoint precedente
 func (aft *AdvancedFaultTolerance) resumeReducerFromCheckpoint(taskID int) {
 	LogInfo("[FaultTolerance] Ripresa reducer dal checkpoint per task %d", taskID)
-	// Implementazione: notifica al master di riprendere dal checkpoint
+	// Notifica al master (endpoint pubblico) di riassegnare il reduce; il nuovo worker riprenderà dal checkpoint
+	rpcAddrs := getMasterRpcAddresses()
+	for _, addr := range rpcAddrs {
+		if client, err := rpc.DialHTTP("tcp", addr); err == nil {
+			var reply Reply
+			// Passa il percorso del checkpoint per aiutare il master a ripristinare lo stato
+			checkpointPath := getOutputFileName(taskID) + ".checkpoint.json"
+			args := ResetTaskArgs{TaskID: taskID, Type: ReduceTask, Reason: "resume reducer from checkpoint; checkpoint=" + checkpointPath}
+			_ = client.Call("Master.PublicResetTask", &args, &reply)
+			client.Close()
+			break
+		}
+	}
 }
 
 // checkDataIntegrity verifica l'integrità dei dati
 func (aft *AdvancedFaultTolerance) checkDataIntegrity() {
-	// Implementazione: verifica integrità file di output e intermedi
+	// Verifica integrità file intermedi e output, e tenta recovery tramite ResetTask
 	LogInfo("[FaultTolerance] Verifica integrità dati...")
-}
 
-// ============================================================================
-// IMPLEMENTAZIONE AVANZATA DEI METODI DI FAULT TOLERANCE
-// ============================================================================
-
-// EnhancedFaultToleranceMethods implementa i metodi avanzati per fault tolerance
-type EnhancedFaultToleranceMethods struct {
-	checkpointManager *CheckpointManager
-	masterClient      *MasterClient
-	fileSystem        *FileSystemManager
-}
-
-// MasterClient rappresenta un client per comunicare con il master
-type MasterClient struct {
-	address string
-	// In implementazione reale, questo dovrebbe essere un client RPC
-}
-
-// FileSystemManager gestisce le operazioni sui file
-type FileSystemManager struct {
-	basePath string
-}
-
-// NewEnhancedFaultToleranceMethods crea i metodi avanzati
-func NewEnhancedFaultToleranceMethods() *EnhancedFaultToleranceMethods {
-	return &EnhancedFaultToleranceMethods{
-		checkpointManager: NewCheckpointManager(),
-		masterClient:      &MasterClient{address: "localhost:8080"},
-		fileSystem:        &FileSystemManager{basePath: "/tmp/mapreduce"},
+	basePath := os.Getenv("TMP_PATH")
+	if basePath == "" {
+		basePath = "."
 	}
-}
 
-// ============================================================================
-// ALGORITMO AVANZATO PER FALLIMENTI MAPPER
-// ============================================================================
-
-// handleMapperFailureAdvanced implementa l'algoritmo avanzato per fallimenti mapper
-func (eftm *EnhancedFaultToleranceMethods) handleMapperFailureAdvanced(workerID string, taskID int) {
-	LogInfo("[AdvancedFaultTolerance] Gestione avanzata fallimento mapper %s, task %d", workerID, taskID)
-
-	// Fase 1: Verifica stato del task
-	taskState := eftm.getTaskState(taskID)
-
-	switch taskState {
-	case "not_started":
-		// Task non iniziato: riavvia normalmente
-		LogInfo("[AdvancedFaultTolerance] Task %d non iniziato, riavvio normale", taskID)
-		eftm.restartTaskNormal(taskID, "map")
-
-	case "in_progress":
-		// Task in corso: verifica se ha prodotto output parziale
-		if eftm.hasPartialOutput(taskID) {
-			LogInfo("[AdvancedFaultTolerance] Task %d in corso con output parziale, riavvio con cleanup", taskID)
-			eftm.cleanupPartialOutput(taskID)
-			eftm.restartTaskNormal(taskID, "map")
-		} else {
-			LogInfo("[AdvancedFaultTolerance] Task %d in corso senza output, riavvio normale", taskID)
-			eftm.restartTaskNormal(taskID, "map")
+	// 1) Controlla intermedi: mr-intermediate-<map>-<reduce>
+	interPattern := filepath.Join(basePath, "mr-intermediate-*-*")
+	interFiles, _ := filepath.Glob(interPattern)
+	for _, file := range interFiles {
+		f, err := os.Open(file)
+		if err != nil {
+			// Reset conservativo dei possibili map task coinvolti
+			if mapID, ok := extractMapIDFromIntermediate(file); ok {
+				LogWarn("[FaultTolerance] Intermedio illeggibile %s, reset MapTask %d", file, mapID)
+				aft.restartTask(mapID, "map")
+			}
+			continue
 		}
-
-	case "completed":
-		// Task completato: verifica se dati sono arrivati al reducer
-		if eftm.verifyDataReachedReducerAdvanced(taskID) {
-			LogInfo("[AdvancedFaultTolerance] Task %d completato, dati arrivati al reducer, nessuna azione necessaria", taskID)
-			// Nessuna azione necessaria
-		} else {
-			LogInfo("[AdvancedFaultTolerance] Task %d completato ma dati non arrivati, riavvio task", taskID)
-			eftm.restartTaskNormal(taskID, "map")
+		dec := json.NewDecoder(f)
+		var kv KeyValue
+		hasData := false
+		valid := true
+		for dec.More() {
+			if err := dec.Decode(&kv); err != nil {
+				valid = false
+				break
+			}
+			hasData = true
 		}
-
-	default:
-		LogInfo("[AdvancedFaultTolerance] Stato task %d sconosciuto: %s", taskID, taskState)
-	}
-}
-
-// verifyDataReachedReducerAdvanced verifica avanzata se i dati sono arrivati al reducer
-func (eftm *EnhancedFaultToleranceMethods) verifyDataReachedReducerAdvanced(taskID int) bool {
-	// Verifica esistenza file intermedi per tutti i reducer
-	for reduceID := 0; reduceID < 3; reduceID++ { // Mock: 3 reducer
-		intermediateFile := fmt.Sprintf("%s/mr-%d-%d", eftm.fileSystem.basePath, taskID, reduceID)
-		if !eftm.fileSystem.fileExists(intermediateFile) {
-			LogInfo("[AdvancedFaultTolerance] File intermedio mancante: %s", intermediateFile)
-			return false
-		}
-
-		// Verifica integrità del file
-		if !eftm.fileSystem.validateFileIntegrity(intermediateFile) {
-			LogInfo("[AdvancedFaultTolerance] File intermedio corrotto: %s", intermediateFile)
-			return false
+		f.Close()
+		if !valid || !hasData {
+			if mapID, ok := extractMapIDFromIntermediate(file); ok {
+				LogWarn("[FaultTolerance] Intermedio corrotto/vuoto %s, reset MapTask %d", file, mapID)
+				aft.restartTask(mapID, "map")
+			}
 		}
 	}
 
-	return true
-}
-
-// ============================================================================
-// ALGORITMO AVANZATO PER FALLIMENTI REDUCER
-// ============================================================================
-
-// handleReducerFailureAdvanced implementa l'algoritmo avanzato per fallimenti reducer
-func (eftm *EnhancedFaultToleranceMethods) handleReducerFailureAdvanced(workerID string, taskID int) {
-	LogInfo("[AdvancedFaultTolerance] Gestione avanzata fallimento reducer %s, task %d", workerID, taskID)
-
-	// Fase 1: Verifica se il reducer aveva ricevuto dati
-	if !eftm.hasReducerReceivedDataAdvanced(taskID) {
-		// Reducer non aveva ricevuto dati: nuovo reducer riceve gli stessi dati
-		LogInfo("[AdvancedFaultTolerance] Reducer %s task %d non aveva ricevuto dati, nuovo reducer riceve gli stessi dati", workerID, taskID)
-		eftm.assignSameDataToNewReducerAdvanced(taskID)
-		return
-	}
-
-	// Fase 2: Reducer aveva ricevuto dati, verifica se aveva iniziato processing
-	if !eftm.hasReducerStartedProcessingAdvanced(taskID) {
-		// Reducer aveva ricevuto dati ma non aveva iniziato: nuovo reducer riceve gli stessi dati
-		LogInfo("[AdvancedFaultTolerance] Reducer %s task %d aveva ricevuto dati ma non iniziato, nuovo reducer riceve gli stessi dati", workerID, taskID)
-		eftm.assignSameDataToNewReducerAdvanced(taskID)
-		return
-	}
-
-	// Fase 3: Reducer stava processando: nuovo reducer riparte dallo stato precedente
-	LogInfo("[AdvancedFaultTolerance] Reducer %s task %d stava processando, nuovo reducer riparte dallo stato precedente", workerID, taskID)
-	eftm.resumeReducerFromCheckpointAdvanced(taskID)
-}
-
-// hasReducerReceivedDataAdvanced verifica avanzata se un reducer ha ricevuto dati
-func (eftm *EnhancedFaultToleranceMethods) hasReducerReceivedDataAdvanced(taskID int) bool {
-	// Verifica esistenza di almeno un file intermedio per questo reducer
-	for mapID := 0; mapID < 3; mapID++ { // Mock: 3 mapper
-		intermediateFile := fmt.Sprintf("%s/mr-%d-%d", eftm.fileSystem.basePath, mapID, taskID)
-		if eftm.fileSystem.fileExists(intermediateFile) {
-			return true
+	// 2) Controlla output reduce mr-out-<id>
+	outPattern := filepath.Join(basePath, "mr-out-*")
+	outFiles, _ := filepath.Glob(outPattern)
+	for _, file := range outFiles {
+		// ignora .partial e .checkpoint.json
+		if strings.HasSuffix(file, ".partial") || strings.HasSuffix(file, ".checkpoint.json") {
+			continue
+		}
+		f, err := os.Open(file)
+		if err != nil {
+			if reduceID, ok := extractReduceIDFromOutput(file); ok {
+				LogWarn("[FaultTolerance] Output illeggibile %s, reset ReduceTask %d", file, reduceID)
+				aft.restartTask(reduceID, "reduce")
+			}
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		hasData := false
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				hasData = true
+				break
+			}
+		}
+		f.Close()
+		if !hasData {
+			if reduceID, ok := extractReduceIDFromOutput(file); ok {
+				LogWarn("[FaultTolerance] Output vuoto %s, reset ReduceTask %d", file, reduceID)
+				aft.restartTask(reduceID, "reduce")
+			}
 		}
 	}
-	return false
 }
 
-// hasReducerStartedProcessingAdvanced verifica avanzata se un reducer ha iniziato l'elaborazione
-func (eftm *EnhancedFaultToleranceMethods) hasReducerStartedProcessingAdvanced(taskID int) bool {
-	// Verifica esistenza checkpoint
-	checkpoint, exists := eftm.checkpointManager.LoadCheckpoint(taskID)
-	if !exists {
-		return false
+// --- Compatibilità: metodi legacy referenziati da strumenti/linter ---
+// (funzioni legacy rimosse)
+
+// Mark advanced methods as used to silence U1000 while keeping them for future extensions.
+// (no-op)
+
+// Helpers per estrarre ID da nomi file, resilienti senza regex pesanti
+func extractMapIDFromIntermediate(path string) (int, bool) {
+	base := filepath.Base(path) // mr-intermediate-<map>-<reduce>
+	parts := strings.Split(base, "-")
+	if len(parts) < 4 {
+		return 0, false
 	}
-
-	// Verifica se il checkpoint è recente (entro 5 minuti)
-	if time.Since(checkpoint.CheckpointTime) > 5*time.Minute {
-		return false
+	// parts[2] = mapID
+	if id, err := strconv.Atoi(parts[2]); err == nil {
+		return id, true
 	}
-
-	return true
+	return 0, false
 }
 
-// assignSameDataToNewReducerAdvanced assegna gli stessi dati a un nuovo reducer
-func (eftm *EnhancedFaultToleranceMethods) assignSameDataToNewReducerAdvanced(taskID int) {
-	LogInfo("[AdvancedFaultTolerance] Assegnazione stessi dati a nuovo reducer per task %d", taskID)
-
-	// 1. Identifica i file intermedi necessari
-	intermediateFiles := eftm.getIntermediateFilesForReducer(taskID)
-
-	// 2. Verifica che tutti i file esistano e siano validi
-	for _, file := range intermediateFiles {
-		if !eftm.fileSystem.fileExists(file) {
-			LogInfo("[AdvancedFaultTolerance] File intermedio mancante: %s", file)
-			return
-		}
-		if !eftm.fileSystem.validateFileIntegrity(file) {
-			LogInfo("[AdvancedFaultTolerance] File intermedio corrotto: %s", file)
-			return
-		}
+func extractReduceIDFromOutput(path string) (int, bool) {
+	base := filepath.Base(path) // mr-out-<id>
+	parts := strings.Split(base, "-")
+	if len(parts) < 3 {
+		return 0, false
 	}
-
-	// 3. Assegna il task a un nuovo reducer
-	eftm.assignTaskToNewReducer(taskID, intermediateFiles)
-}
-
-// resumeReducerFromCheckpointAdvanced fa ripartire un reducer dal checkpoint
-func (eftm *EnhancedFaultToleranceMethods) resumeReducerFromCheckpointAdvanced(taskID int) {
-	LogInfo("[AdvancedFaultTolerance] Ripresa reducer dal checkpoint per task %d", taskID)
-
-	// 1. Carica il checkpoint
-	checkpoint, exists := eftm.checkpointManager.LoadCheckpoint(taskID)
-	if !exists {
-		LogInfo("[AdvancedFaultTolerance] Nessun checkpoint trovato per task %d, riavvio normale", taskID)
-		eftm.assignSameDataToNewReducerAdvanced(taskID)
-		return
+	// parts[2] may include extension, but our files have no extension
+	if id, err := strconv.Atoi(parts[2]); err == nil {
+		return id, true
 	}
-
-	// 2. Verifica validità del checkpoint
-	if !eftm.validateCheckpoint(checkpoint) {
-		LogInfo("[AdvancedFaultTolerance] Checkpoint invalido per task %d, riavvio normale", taskID)
-		eftm.assignSameDataToNewReducerAdvanced(taskID)
-		return
-	}
-
-	// 3. Assegna il task con checkpoint a un nuovo reducer
-	eftm.assignTaskWithCheckpointToNewReducer(taskID, checkpoint)
-}
-
-// ============================================================================
-// FUNZIONI DI SUPPORTO AVANZATE
-// ============================================================================
-
-// getTaskState restituisce lo stato di un task
-func (eftm *EnhancedFaultToleranceMethods) getTaskState(taskID int) string {
-	// Implementazione semplificata
-	// In implementazione reale, questo dovrebbe interrogare il master
-	return "in_progress" // Mock
-}
-
-// hasPartialOutput verifica se un task ha prodotto output parziale
-func (eftm *EnhancedFaultToleranceMethods) hasPartialOutput(taskID int) bool {
-	// Verifica esistenza file temporanei
-	tempFiles := eftm.getTempFilesForTask(taskID)
-	for _, file := range tempFiles {
-		if eftm.fileSystem.fileExists(file) {
-			return true
-		}
-	}
-	return false
-}
-
-// cleanupPartialOutput pulisce l'output parziale di un task
-func (eftm *EnhancedFaultToleranceMethods) cleanupPartialOutput(taskID int) {
-	tempFiles := eftm.getTempFilesForTask(taskID)
-	for _, file := range tempFiles {
-		eftm.fileSystem.deleteFile(file)
-	}
-}
-
-// restartTaskNormal riavvia un task normalmente
-func (eftm *EnhancedFaultToleranceMethods) restartTaskNormal(taskID int, taskType string) {
-	LogInfo("[AdvancedFaultTolerance] Riavvio normale task %d di tipo %s", taskID, taskType)
-	// Implementazione: notifica al master di riavviare il task
-}
-
-// getIntermediateFilesForReducer restituisce i file intermedi per un reducer
-func (eftm *EnhancedFaultToleranceMethods) getIntermediateFilesForReducer(taskID int) []string {
-	var files []string
-	for mapID := 0; mapID < 3; mapID++ { // Mock: 3 mapper
-		files = append(files, fmt.Sprintf("%s/mr-%d-%d", eftm.fileSystem.basePath, mapID, taskID))
-	}
-	return files
-}
-
-// assignTaskToNewReducer assegna un task a un nuovo reducer
-func (eftm *EnhancedFaultToleranceMethods) assignTaskToNewReducer(taskID int, intermediateFiles []string) {
-	LogInfo("[AdvancedFaultTolerance] Assegnazione task %d a nuovo reducer con %d file intermedi", taskID, len(intermediateFiles))
-	// Implementazione: notifica al master di assegnare il task
-}
-
-// assignTaskWithCheckpointToNewReducer assegna un task con checkpoint a un nuovo reducer
-func (eftm *EnhancedFaultToleranceMethods) assignTaskWithCheckpointToNewReducer(taskID int, checkpoint *ReducerCheckpoint) {
-	LogInfo("[AdvancedFaultTolerance] Assegnazione task %d con checkpoint a nuovo reducer (chiavi processate: %d)", taskID, checkpoint.ProcessedKeys)
-	// Implementazione: notifica al master di assegnare il task con checkpoint
-}
-
-// validateCheckpoint valida un checkpoint
-func (eftm *EnhancedFaultToleranceMethods) validateCheckpoint(checkpoint *ReducerCheckpoint) bool {
-	// Verifica che il checkpoint non sia troppo vecchio
-	if time.Since(checkpoint.CheckpointTime) > 30*time.Minute {
-		return false
-	}
-
-	// Verifica che i dati del checkpoint siano validi
-	if checkpoint.ProcessedKeys < 0 {
-		return false
-	}
-
-	return true
-}
-
-// getTempFilesForTask restituisce i file temporanei per un task
-func (eftm *EnhancedFaultToleranceMethods) getTempFilesForTask(taskID int) []string {
-	return []string{
-		fmt.Sprintf("%s/temp-map-%d", eftm.fileSystem.basePath, taskID),
-		fmt.Sprintf("%s/temp-reduce-%d", eftm.fileSystem.basePath, taskID),
-	}
-}
-
-// ============================================================================
-// FILE SYSTEM MANAGER
-// ============================================================================
-
-// fileExists verifica se un file esiste
-func (fsm *FileSystemManager) fileExists(path string) bool {
-	// Implementazione semplificata
-	// In implementazione reale, questo dovrebbe usare os.Stat
-	return true // Mock
-}
-
-// validateFileIntegrity verifica l'integrità di un file
-func (fsm *FileSystemManager) validateFileIntegrity(path string) bool {
-	// Implementazione semplificata
-	// In implementazione reale, questo dovrebbe verificare checksum, dimensioni, etc.
-	return true // Mock
-}
-
-// deleteFile elimina un file
-func (fsm *FileSystemManager) deleteFile(path string) {
-	LogInfo("[FileSystemManager] Eliminazione file: %s", path)
-	// Implementazione: os.Remove(path)
+	return 0, false
 }
 
 // ============================================================================

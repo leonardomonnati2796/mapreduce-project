@@ -301,8 +301,8 @@ resource "aws_lb_listener" "mapreduce_listener" {
 }
 
 # Launch Template
-resource "aws_launch_template" "mapreduce_lt" {
-  name_prefix   = "${var.project_name}-lt-"
+resource "aws_launch_template" "mapreduce_master_lt" {
+  name_prefix   = "${var.project_name}-master-lt-"
   image_id      = data.aws_ami.amazon_linux.id
   instance_type = var.instance_type
 
@@ -329,33 +329,116 @@ resource "aws_launch_template" "mapreduce_lt" {
     }
   }
 
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name           = "${var.project_name}-master"
+      Environment    = var.environment
+      Project        = var.project_name
+      ${var.instance_role_tag_key} = "MASTER"
+    }
+  }
+
   tags = {
-    Name        = "${var.project_name}-lt"
+    Name        = "${var.project_name}-master-lt"
     Environment = var.environment
     Project     = var.project_name
   }
 }
 
-# Auto Scaling Group
-resource "aws_autoscaling_group" "mapreduce_asg" {
-  name                = "${var.project_name}-asg"
+# Launch Template for workers
+resource "aws_launch_template" "mapreduce_worker_lt" {
+  name_prefix   = "${var.project_name}-worker-lt-"
+  image_id      = data.aws_ami.amazon_linux.id
+  instance_type = var.instance_type
+
+  vpc_security_group_ids = [aws_security_group.mapreduce_ec2_sg.id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.mapreduce_ec2_profile.name
+  }
+
+  user_data = base64encode(templatefile("${path.module}/user_data.sh", {
+    AWS_REGION     = var.aws_region,
+    S3_BUCKET      = aws_s3_bucket.mapreduce_storage.bucket,
+    LOG_GROUP_NAME = aws_cloudwatch_log_group.mapreduce_logs.name,
+    REPO_URL       = var.repo_url,
+    REPO_BRANCH    = var.repo_branch
+  }))
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name           = "${var.project_name}-worker"
+      Environment    = var.environment
+      Project        = var.project_name
+      ${var.instance_role_tag_key} = "WORKER"
+    }
+  }
+
+  tags = {
+    Name        = "${var.project_name}-worker-lt"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# Auto Scaling Group - Masters
+resource "aws_autoscaling_group" "mapreduce_masters_asg" {
+  name                = "${var.project_name}-masters-asg"
   vpc_zone_identifier = [aws_subnet.mapreduce_public_1.id, aws_subnet.mapreduce_public_2.id]
-  target_group_arns   = [aws_lb_target_group.mapreduce_tg.arn]
+  target_group_arns   = [aws_lb_target_group.mapreduce_master_tg.arn]
   health_check_type   = "ELB"
   health_check_grace_period = 300
 
-  min_size         = var.min_instances
-  max_size         = var.max_instances
-  desired_capacity = var.desired_instances
+  min_size         = var.masters_min
+  max_size         = var.masters_max
+  desired_capacity = var.masters_desired
 
   launch_template {
-    id      = aws_launch_template.mapreduce_lt.id
+    id      = aws_launch_template.mapreduce_master_lt.id
     version = "$Latest"
   }
 
   tag {
     key                 = "Name"
     value               = "${var.project_name}-instance"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.environment
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Project"
+    value               = var.project_name
+    propagate_at_launch = true
+  }
+}
+
+# Auto Scaling Group - Workers
+resource "aws_autoscaling_group" "mapreduce_workers_asg" {
+  name                = "${var.project_name}-workers-asg"
+  vpc_zone_identifier = [aws_subnet.mapreduce_public_1.id, aws_subnet.mapreduce_public_2.id]
+  target_group_arns   = [aws_lb_target_group.mapreduce_worker_tg.arn]
+  health_check_type   = "ELB"
+  health_check_grace_period = 300
+
+  min_size         = var.workers_min
+  max_size         = var.workers_max
+  desired_capacity = var.workers_desired
+
+  launch_template {
+    id      = aws_launch_template.mapreduce_worker_lt.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "${var.project_name}-worker-instance"
     propagate_at_launch = true
   }
 

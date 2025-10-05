@@ -7,16 +7,9 @@ import (
 )
 
 const (
-	defaultDashboardPort = 8080
-	defaultTempPath      = "temp-local"
-	defaultOutputPath    = "output"
-	defaultRaftDataPath  = "raft-data"
-	defaultRaftPort1     = "localhost:1234"
-	defaultRaftPort2     = "localhost:1235"
-	defaultRaftPort3     = "localhost:1236"
-	defaultRpcPort1      = "localhost:8000"
-	defaultRpcPort2      = "localhost:8001"
-	defaultRpcPort3      = "localhost:8002"
+	defaultTempPath     = "temp-local"
+	defaultOutputPath   = "output"
+	defaultRaftDataPath = "raft-data"
 )
 
 // Config contiene tutta la configurazione del sistema
@@ -42,7 +35,7 @@ type DashboardConfig struct {
 func LoadConfig(configPath string) (*Config, error) {
 	config := &Config{
 		Dashboard: DashboardConfig{
-			Port:    getEnvInt("DASHBOARD_PORT", defaultDashboardPort),
+			Port:    getEnvInt("DASHBOARD_PORT", 8080),
 			Enabled: getEnvBool("DASHBOARD_ENABLED", true),
 		},
 		Paths: PathConfig{
@@ -71,12 +64,12 @@ func GetConfig() *Config {
 
 // GetRaftAddresses restituisce gli indirizzi Raft dalla configurazione globale
 func (c *Config) GetRaftAddresses() []string {
-	return []string{defaultRaftPort1, defaultRaftPort2, defaultRaftPort3}
+	return []string{"localhost:1234", "localhost:1235", "localhost:1236"}
 }
 
 // GetRPCAddresses restituisce gli indirizzi RPC dalla configurazione globale
 func (c *Config) GetRPCAddresses() []string {
-	return []string{defaultRpcPort1, defaultRpcPort2, defaultRpcPort3}
+	return []string{"localhost:8000", "localhost:8001", "localhost:8002"}
 }
 
 // GetTempPath restituisce il percorso temporaneo dalla configurazione globale
@@ -98,15 +91,6 @@ func (c *Config) GetRaftDataDir() string {
 func getEnvString(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
 	}
 	return defaultValue
 }

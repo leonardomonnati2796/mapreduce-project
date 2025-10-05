@@ -26,9 +26,8 @@ const (
 	textProcessDelay = 2 * time.Second
 	simulationDelay  = 3 * time.Second
 	// Server configuration
-	defaultPort = 8080
-	maxPort     = 65535
-	minPort     = 1
+	maxPort = 65535
+	minPort = 1
 	// Timeouts
 	readTimeout  = 15 * time.Second
 	writeTimeout = 15 * time.Second
@@ -291,8 +290,8 @@ func (d *Dashboard) setupRoutes() {
 		// Performance endpoints
 		api.GET("/performance", d.getPerformanceStatsEndpoint)
 
-		// Prometheus metrics endpoint
-		api.GET("/metrics", gin.WrapH(promhttp.Handler()))
+		// Prometheus metrics endpoint (avoid clashing with JSON metrics)
+		api.GET("/metrics/prom", gin.WrapH(promhttp.Handler()))
 	}
 
 	// WebSocket endpoints
@@ -603,19 +602,7 @@ func (d *Dashboard) getJobsData() ([]JobInfo, error) {
 	return jobs, nil
 }
 
-// getJobFromPool ottiene un JobInfo dal pool per riutilizzo
-func (d *Dashboard) getJobFromPool() *JobInfo {
-	return d.jobPool.Get().(*JobInfo)
-}
-
-// returnJobToPool restituisce un JobInfo al pool
-func (d *Dashboard) returnJobToPool(job *JobInfo) {
-	// Reset dei campi per il riutilizzo
-	*job = JobInfo{}
-	d.jobPool.Put(job)
-}
-
-// getWorkersData raccoglie i dati dei worker reali (ottimizzato con pool)
+// getWorkersData raccoglie i dati dei worker reali (ottimizzato)
 func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 	if d.master == nil {
 		return []WorkerInfoDashboard{}, nil
@@ -626,19 +613,7 @@ func (d *Dashboard) getWorkersData() ([]WorkerInfoDashboard, error) {
 	return workers, nil
 }
 
-// getWorkerFromPool ottiene un WorkerInfoDashboard dal pool per riutilizzo
-func (d *Dashboard) getWorkerFromPool() *WorkerInfoDashboard {
-	return d.workerPool.Get().(*WorkerInfoDashboard)
-}
-
-// returnWorkerToPool restituisce un WorkerInfoDashboard al pool
-func (d *Dashboard) returnWorkerToPool(worker *WorkerInfoDashboard) {
-	// Reset dei campi per il riutilizzo
-	*worker = WorkerInfoDashboard{}
-	d.workerPool.Put(worker)
-}
-
-// getMastersData raccoglie i dati dei master reali (ottimizzato con pool)
+// getMastersData raccoglie i dati dei master reali (ottimizzato)
 func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
 	if d.master == nil {
 		return []MasterInfo{}, nil
@@ -647,18 +622,6 @@ func (d *Dashboard) getMastersData() ([]MasterInfo, error) {
 	// Usa i metodi reali del Master
 	masters := d.master.GetMasterInfoForDashboard()
 	return masters, nil
-}
-
-// getMasterFromPool ottiene un MasterInfo dal pool per riutilizzo
-func (d *Dashboard) getMasterFromPool() *MasterInfo {
-	return d.masterPool.Get().(*MasterInfo)
-}
-
-// returnMasterToPool restituisce un MasterInfo al pool
-func (d *Dashboard) returnMasterToPool(master *MasterInfo) {
-	// Reset dei campi per il riutilizzo
-	*master = MasterInfo{}
-	d.masterPool.Put(master)
 }
 
 // Stop ferma il dashboard in modo pulito
@@ -1078,6 +1041,10 @@ func (d *Dashboard) electLeader(c *gin.Context) {
 	raftAddrs := getMasterRaftAddresses()
 	rpcAddrs := getMasterRpcAddresses()
 
+	// Log network configuration for debugging
+	networkConfig := GetNetworkConfig()
+	LogInfo("Dashboard network config - Environment: %s, Local Mode: %v", networkConfig.DeploymentEnv, networkConfig.LocalMode)
+
 	LogInfo("Master disponibili: %d", len(raftAddrs))
 	for i, addr := range raftAddrs {
 		LogInfo("  Master %d: %s (RPC: %s)", i, addr, rpcAddrs[i])
@@ -1378,7 +1345,9 @@ func (d *Dashboard) processText(c *gin.Context) {
 	}
 
 	if textRequest.NReduce <= 0 {
-		textRequest.NReduce = defaultNReduce // Default value
+		// Usa la stessa logica del master per calcolare il numero di reducer
+		textRequest.NReduce = calculateDynamicReducerCount()
+		LogInfo("Dashboard using dynamic reducer count: %d", textRequest.NReduce)
 	}
 
 	// Genera un ID univoco per il job
@@ -2093,7 +2062,7 @@ func (d *Dashboard) initializeLoadBalancerServers() []Server {
 	for i, port := range workerPorts {
 		servers = append(servers, Server{
 			ID:      fmt.Sprintf("worker-%d", i),
-			Address: "localhost", // In produzione, usa l'IP reale
+			Address: getWorkerAddress(i), // Dynamic IP based on environment
 			Port:    port,
 			Weight:  5, // Peso minore per i worker
 			Healthy: true,
@@ -2101,6 +2070,18 @@ func (d *Dashboard) initializeLoadBalancerServers() []Server {
 	}
 
 	return servers
+}
+
+// getWorkerAddress returns the appropriate worker address based on environment
+func getWorkerAddress(index int) string {
+	networkConfig := GetNetworkConfig()
+
+	if networkConfig.IsAWS() && index < len(networkConfig.WorkerIPs) {
+		return networkConfig.WorkerIPs[index]
+	}
+
+	// Fallback for local development
+	return "localhost"
 }
 
 // getLoadBalancerStats restituisce le statistiche del load balancer

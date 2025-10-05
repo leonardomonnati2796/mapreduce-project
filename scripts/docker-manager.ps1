@@ -128,6 +128,9 @@ function Start-ClusterFast {
     docker-compose -f docker/docker-compose.yml up -d
     
     if ($LASTEXITCODE -eq 0) {
+        Write-Host "Avviando worker se non già in esecuzione..."
+        docker-compose -f docker/docker-compose.yml up -d worker1 worker2 worker3
+        
         Write-ColorOutput "Cluster MapReduce avviato con successo!" "Green"
         Write-Host "Dashboard: http://localhost:8080"
         return $true
@@ -208,11 +211,15 @@ function Test-ClusterHealth {
     Write-Host ""
     
     # Esegui controlli in parallelo per velocità
+    # Risolve il percorso assoluto del compose file per i job in background
+    $composeFile = (Resolve-Path "docker/docker-compose.yml").Path
+
     $containerJob = Start-Job -ScriptBlock { 
-        $containers = docker-compose -f docker/docker-compose.yml ps --services
-        $running = docker-compose -f docker/docker-compose.yml ps --services --filter "status=running"
+        param($cf)
+        $containers = docker-compose -f $cf ps --services
+        $running = docker-compose -f $cf ps --services --filter "status=running"
         return @{Total = $containers.Count; Running = $running.Count}
-    }
+    } -ArgumentList $composeFile
     
     $dashboardJob = Start-Job -ScriptBlock {
         try {
@@ -246,7 +253,7 @@ function Test-ClusterHealth {
         Write-ColorOutput "Tutti i container sono in esecuzione" "Green"
     } else {
         Write-ColorOutput "Alcuni container non sono in esecuzione" "Red"
-        docker-compose -f docker/docker-compose.yml ps
+        docker-compose -f $composeFile ps
     }
     
     # Mostra risultato dashboard
@@ -330,67 +337,27 @@ function Copy-OutputFiles {
         return $false
     }
     
-    $activeWorker = $null
-    $projectName = Split-Path (Get-Location) -Leaf
-    if ($projectName -eq "") {
-        $projectName = "mapreduce-project"
-    }
-    
-    $workerContainers = docker-compose -f docker/docker-compose.yml ps --services | Where-Object { $_ -match "^worker\d+$" }
-    
-    foreach ($workerService in $workerContainers) {
-        $containerName = "${projectName}-${workerService}-1"
-        try {
-            docker exec $containerName echo "test" 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                $activeWorker = $containerName
-                break
-            }
-        }
-        catch {
-            $altContainerName = "${projectName}_${workerService}_1"
-            try {
-                docker exec $altContainerName echo "test" 2>$null | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    $activeWorker = $altContainerName
-                    break
-                }
-            }
-            catch {
-                continue
-            }
-        }
-    }
-    
-    if (-not $activeWorker) {
-        Write-ColorOutput "ERRORE: Nessun container worker attivo trovato" "Red"
-        Write-Host "Assicurati che i servizi MapReduce siano in esecuzione con: docker-compose up -d"
-        Write-Host "Container disponibili:"
-        docker-compose -f docker/docker-compose.yml ps
-        return $false
-    }
-    
-    Write-Host "Container worker attivo trovato: $activeWorker"
-    Write-Host ""
-    
     if (-not (Test-Path "data/output")) {
         New-Item -ItemType Directory -Path "data/output" -Force | Out-Null
         Write-Host "Cartella data/output creata"
     }
     
     Write-Host ""
-    Write-Host "Ricerca e copia file di output..."
+    Write-Host "Ricerca e copia file di output dal volume Docker..."
     $copiedFiles = 0
     $skippedFiles = 0
     
-    for ($i = 0; $i -le 9; $i++) {
-        $sourceFile = "/tmp/mapreduce/mr-out-$i"
+    # Copia file mr-out-* direttamente dal volume Docker (solo 3 file per correlazione 1:1:1)
+    for ($i = 0; $i -le 2; $i++) {
+        $sourceFile = "/data/mr-out-$i"
         $destFile = "data/output/mr-out-$i"
         
         try {
-            docker exec $activeWorker test -f $sourceFile | Out-Null
+            # Usa un container temporaneo per accedere al volume
+            docker run --rm -v mapreduce-project_intermediate-data:/data alpine test -f $sourceFile 2>$null
             if ($LASTEXITCODE -eq 0) {
-                docker cp "$activeWorker`:$sourceFile" $destFile
+                $outputPath = (Resolve-Path "data/output").Path
+                docker run --rm -v mapreduce-project_intermediate-data:/data -v "${outputPath}:/output" alpine cp $sourceFile /output/mr-out-$i
                 if ($LASTEXITCODE -eq 0) {
                     Write-ColorOutput "File copiato: mr-out-$i" "Green"
                     $copiedFiles++
@@ -406,25 +373,44 @@ function Copy-OutputFiles {
         }
     }
     
-    $unifiedSourceFile = "/tmp/mapreduce/final-output.txt"
+    # Crea file finale unificato combinando tutti i mr-out-* locali
+    Write-Host "Creazione file finale unificato..."
+    $outputPath = (Resolve-Path "data/output").Path
     $unifiedDestFile = "data/output/final-output.txt"
     
     try {
-        docker exec $activeWorker test -f $unifiedSourceFile | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            docker cp "$activeWorker`:$unifiedSourceFile" $unifiedDestFile
-            if ($LASTEXITCODE -eq 0) {
-                Write-ColorOutput "File finale unificato copiato: final-output.txt" "Green"
-                $copiedFiles++
-            } else {
-                Write-ColorOutput "Errore copia file finale unificato" "Red"
+        # Crea file finale unificato combinando tutti i mr-out-* locali
+        $finalContent = @()
+        $finalContent += "=== RISULTATI MAPREDUCE UNIFICATI ==="
+        $finalContent += "Generati il $(Get-Date -Format 'ddd, MMM dd, yyyy hh:mm:ss tt')"
+        $finalContent += ""
+        
+        for ($i = 0; $i -le 2; $i++) {
+            $mrOutFile = "data/output/mr-out-$i"
+            if (Test-Path $mrOutFile) {
+                $finalContent += "=== FILE mr-out-$i ==="
+                $content = Get-Content $mrOutFile -Raw
+                if ($content) {
+                    $finalContent += $content.Trim()
+                } else {
+                    $finalContent += "(file vuoto)"
+                }
+                $finalContent += ""
             }
+        }
+        
+        # Scrivi il file finale
+        $finalContent | Out-File -FilePath $unifiedDestFile -Encoding UTF8
+        
+        if (Test-Path $unifiedDestFile) {
+            Write-ColorOutput "File finale unificato creato: final-output.txt" "Green"
+            $copiedFiles++
         } else {
-            Write-Host "File finale unificato non trovato nel volume Docker"
+            Write-ColorOutput "Errore creazione file finale unificato" "Red"
         }
     }
     catch {
-        Write-Host "File finale unificato non trovato nel volume Docker"
+        Write-Host "Errore creazione file finale unificato: $($_.Exception.Message)"
     }
     
     Write-Host ""

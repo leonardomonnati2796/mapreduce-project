@@ -1,0 +1,285 @@
+version: '3.8'
+
+services:
+  # Master 0
+  master0:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-master-0
+    ports:
+      - "${RAFT_PORT_0:-1234}:${RAFT_PORT_0:-1234}"
+      - "${RPC_PORT_0:-8000}:${RPC_PORT_0:-8000}"
+      - "${HEALTH_PORT_0:-8100}:${HEALTH_PORT_0:-8100}"
+    environment:
+      - NODE_ROLE=master
+      - MASTER_ID=0
+      - RAFT_PORT=${RAFT_PORT_0:-1234}
+      - RPC_PORT=${RPC_PORT_0:-8000}
+      - HEALTH_PORT=${HEALTH_PORT_0:-8100}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    networks:
+      - mapreduce-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${HEALTH_PORT_0:-8100}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Master 1
+  master1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-master-1
+    ports:
+      - "${RAFT_PORT_1:-1235}:${RAFT_PORT_1:-1235}"
+      - "${RPC_PORT_1:-8001}:${RPC_PORT_1:-8001}"
+      - "${HEALTH_PORT_1:-8101}:${HEALTH_PORT_1:-8101}"
+    environment:
+      - NODE_ROLE=master
+      - MASTER_ID=1
+      - RAFT_PORT=${RAFT_PORT_1:-1235}
+      - RPC_PORT=${RPC_PORT_1:-8001}
+      - HEALTH_PORT=${HEALTH_PORT_1:-8101}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    networks:
+      - mapreduce-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${HEALTH_PORT_1:-8101}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Master 2
+  master2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-master-2
+    ports:
+      - "${RAFT_PORT_2:-1236}:${RAFT_PORT_2:-1236}"
+      - "${RPC_PORT_2:-8002}:${RPC_PORT_2:-8002}"
+      - "${HEALTH_PORT_2:-8102}:${HEALTH_PORT_2:-8102}"
+    environment:
+      - NODE_ROLE=master
+      - MASTER_ID=2
+      - RAFT_PORT=${RAFT_PORT_2:-1236}
+      - RPC_PORT=${RPC_PORT_2:-8002}
+      - HEALTH_PORT=${HEALTH_PORT_2:-8102}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    networks:
+      - mapreduce-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${HEALTH_PORT_2:-8102}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Worker 1
+  worker1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-worker-1
+    ports:
+      - "${WORKER_PORT_1:-8081}:${WORKER_PORT_1:-8081}"
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_ID=1
+      - WORKER_PORT=${WORKER_PORT_1:-8081}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    networks:
+      - mapreduce-net
+    depends_on:
+      - master0
+      - master1
+      - master2
+
+  # Worker 2
+  worker2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-worker-2
+    ports:
+      - "${WORKER_PORT_2:-8082}:${WORKER_PORT_2:-8082}"
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_ID=2
+      - WORKER_PORT=${WORKER_PORT_2:-8082}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    networks:
+      - mapreduce-net
+    depends_on:
+      - master0
+      - master1
+      - master2
+
+  # Worker 3
+  worker3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-worker-3
+    ports:
+      - "${WORKER_PORT_3:-8083}:${WORKER_PORT_3:-8083}"
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_ID=3
+      - WORKER_PORT=${WORKER_PORT_3:-8083}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    networks:
+      - mapreduce-net
+    depends_on:
+      - master0
+      - master1
+      - master2
+
+  # Dashboard
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mapreduce-dashboard
+    command: ["./mapreduce", "dashboard", "--port", "${DASHBOARD_PORT:-8080}"]
+    ports:
+      - "${DASHBOARD_PORT:-8080}:${DASHBOARD_PORT:-8080}"
+    volumes:
+      - intermediate-data:/tmp/mapreduce
+      - ../data:/root/data:ro
+    environment:
+      - DASHBOARD_PORT=${DASHBOARD_PORT:-8080}
+      - RAFT_ADDRESSES=${RAFT_ADDRESSES}
+      - RPC_ADDRESSES=${RPC_ADDRESSES}
+      - WORKER_ADDRESSES=${WORKER_ADDRESSES}
+      - MY_PRIVATE_IP=${MY_PRIVATE_IP}
+      - MASTER_IPS=${MASTER_IPS}
+      - WORKER_IPS=${WORKER_IPS}
+      - DEPLOYMENT_ENV=${DEPLOYMENT_ENV:-local}
+      - LOCAL_MODE=${LOCAL_MODE:-true}
+      - TMP_PATH=/tmp/mapreduce
+    networks:
+      - mapreduce-net
+    depends_on:
+      - master0
+      - master1
+      - master2
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: mapreduce-nginx
+    ports:
+      - "${NGINX_PORT:-80}:${NGINX_PORT:-80}"
+      - "${NGINX_SSL_PORT:-443}:${NGINX_SSL_PORT:-443}"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    environment:
+      - NGINX_PORT=${NGINX_PORT:-80}
+      - NGINX_SSL_PORT=${NGINX_SSL_PORT:-443}
+      - DASHBOARD_PORT=${DASHBOARD_PORT:-8080}
+      - RPC_PORT_0=${RPC_PORT_0:-8000}
+      - RPC_PORT_1=${RPC_PORT_1:-8001}
+      - RPC_PORT_2=${RPC_PORT_2:-8002}
+      - WORKER_PORT_1=${WORKER_PORT_1:-8081}
+      - WORKER_PORT_2=${WORKER_PORT_2:-8082}
+      - WORKER_PORT_3=${WORKER_PORT_3:-8083}
+    networks:
+      - mapreduce-net
+    depends_on:
+      - master0
+      - master1
+      - master2
+      - worker1
+      - worker2
+      - worker3
+      - dashboard
+
+  # Redis for caching
+  redis:
+    image: redis:alpine
+    container_name: mapreduce-redis
+    ports:
+      - "${REDIS_PORT:-6379}:${REDIS_PORT:-6379}"
+    environment:
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    networks:
+      - mapreduce-net
+    volumes:
+      - redis-data:/data
+
+volumes:
+  intermediate-data:
+  redis-data:
+
+networks:
+  mapreduce-net:
+    driver: bridge

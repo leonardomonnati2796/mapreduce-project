@@ -22,7 +22,13 @@ func InitConfig(configPath string) error {
 }
 
 func getMasterRaftAddresses() []string {
-	// Prima controlla se ci sono indirizzi Raft nelle variabili d'ambiente (per Docker)
+	// Use new network configuration
+	networkConfig := GetNetworkConfig()
+	if len(networkConfig.RaftAddresses) > 0 {
+		return networkConfig.RaftAddresses
+	}
+
+	// Fallback to environment variables
 	if raftAddrs := os.Getenv("RAFT_ADDRESSES"); raftAddrs != "" {
 		return strings.Split(raftAddrs, ",")
 	}
@@ -31,11 +37,17 @@ func getMasterRaftAddresses() []string {
 		return globalConfig.GetRaftAddresses()
 	}
 	// Fallback ai valori di default se la configurazione non è inizializzata
-	return []string{defaultRaftPort1, defaultRaftPort2, defaultRaftPort3}
+	return []string{"localhost:1234", "localhost:1235", "localhost:1236"}
 }
 
 func getMasterRpcAddresses() []string {
-	// Prima controlla se ci sono indirizzi RPC nelle variabili d'ambiente (per Docker)
+	// Use new network configuration
+	networkConfig := GetNetworkConfig()
+	if len(networkConfig.RpcAddresses) > 0 {
+		return networkConfig.RpcAddresses
+	}
+
+	// Fallback to environment variables
 	if rpcAddrs := os.Getenv("RPC_ADDRESSES"); rpcAddrs != "" {
 		return strings.Split(rpcAddrs, ",")
 	}
@@ -44,17 +56,18 @@ func getMasterRpcAddresses() []string {
 		return globalConfig.GetRPCAddresses()
 	}
 	// Fallback ai valori di default se la configurazione non è inizializzata
-	return []string{defaultRpcPort1, defaultRpcPort2, defaultRpcPort3}
+	return []string{"localhost:8000", "localhost:8001", "localhost:8002"}
 }
 
 // TaskType è definito in constants.go
 
 type Task struct {
-	Type    TaskType
-	TaskID  int
-	Input   string
-	NReduce int
-	NMap    int
+	Type       TaskType
+	TaskID     int
+	Input      string
+	NReduce    int
+	NMap       int
+	Checkpoint string `json:"checkpoint,omitempty"`
 }
 type RequestTaskArgs struct {
 	WorkerID string `json:"worker_id"`
@@ -115,6 +128,27 @@ type GetWorkerCountArgs struct{}
 type WorkerCountReply struct {
 	ActiveWorkers int `json:"active_workers"`
 	TotalWorkers  int `json:"total_workers"`
+}
+
+// ResetTaskArgs consente di richiedere il reset di un task specifico
+type ResetTaskArgs struct {
+	TaskID int      `json:"task_id"`
+	Type   TaskType `json:"type"` // MapTask o ReduceTask
+	Reason string   `json:"reason,omitempty"`
+}
+
+// GetWorkerTasksArgs/Reply per ottenere i task assegnati a un worker
+type GetWorkerTasksArgs struct {
+	WorkerID string `json:"worker_id"`
+}
+type GetWorkerTasksReply struct {
+	Tasks []WorkerTask `json:"tasks"`
+}
+
+// WorkerTask rappresenta un task con ID e tipo
+type WorkerTask struct {
+	TaskID int      `json:"task_id"`
+	Type   TaskType `json:"type"`
 }
 
 func getIntermediateFileName(mapTaskID, reduceTaskID int) string {
