@@ -311,6 +311,119 @@ function Test-FaultTolerance {
     Write-ColorOutput "Test fault tolerance completato" "Green"
 }
 
+# New: Simula crash reduce e verifica resume da checkpoint
+function Test-Reduce-Checkpoint {
+    Write-ColorOutput "=== TEST CHECKPOINT REDUCE ===" "Magenta"
+    Write-Host "Preparazione: verifica che un job MapReduce sia in esecuzione..."
+    
+    Test-ClusterHealth # Verifica stato iniziale
+
+    # Forza l'avvio di un nuovo job riavviando i master (rapido) per garantire fase Reduce più avanti
+    Write-Host "Forzo nuovo job riavviando i master..."
+    docker-compose -f docker/docker-compose.yml restart master0 master1 master2 | Out-Null
+    Start-Sleep -Seconds 2
+
+    Write-Host "1. Attesa che i reduce task siano assegnati e in esecuzione..."
+    Start-Sleep -Seconds 10 # Attesa per l'avvio dei reduce task
+
+    Write-Host "2. Verifica che almeno un reduce task sia in corso..."
+    $reduceInProgress = $false
+    $attempts = 0
+    $maxAttempts = 30
+    
+    while (-not $reduceInProgress -and $attempts -lt $maxAttempts) {
+        try {
+            # Controlla i log dei master per vedere se ci sono reduce task attivi
+            $logs = docker-compose -f docker/docker-compose.yml logs --tail=300 master0 master1 master2 2>$null
+            if ($logs -match "ReduceTask.*InProgress|Assegnato ReduceTask|Riassegnato ReduceTask|Transizione a ReducePhase") {
+                $reduceInProgress = $true
+                Write-Host "   Reduce task attivi rilevati nei log"
+                break
+            }
+            
+            # Controlla anche via API se disponibile
+            $response = Invoke-WebRequest -Uri "http://localhost:8080/api/v1/jobs" -UseBasicParsing -TimeoutSec 3 -ErrorAction SilentlyContinue
+            if ($response -and $response.StatusCode -eq 200) {
+                $jobs = $response.Content | ConvertFrom-Json
+                if ($jobs.jobs -and $jobs.jobs.Count -gt 0) {
+                    $reduceInProgress = $true
+                    Write-Host "   Job MapReduce attivo rilevato via API"
+                    break
+                }
+            }
+        } catch {
+            # Ignora errori di connessione
+        }
+        
+        $attempts++
+        if ($attempts -lt $maxAttempts) {
+            Write-Host "   Tentativo $attempts/$maxAttempts - attesa reduce task..."
+            Start-Sleep -Seconds 2
+        }
+    }
+
+    if (-not $reduceInProgress) {
+        Write-Host "   ATTENZIONE: Nessun reduce task in corso, il test potrebbe non essere significativo"
+        Write-Host "   (Procedo comunque con il test per verificare il comportamento del sistema)"
+    } else {
+        Write-Host "   Reduce task attivi confermati, procedo con il test"
+    }
+
+    Write-Host "3. Simulazione crash reducer (stop worker1)..."
+    docker-compose -f docker/docker-compose.yml stop worker1 | Out-Null
+    Start-Sleep -Seconds 5
+
+    Write-Host "4. Attesa riassegnazione e ripartenza dal checkpoint..."
+    Write-Host "   (Il master dovrebbe riassegnare il reduce task con checkpoint)"
+    Start-Sleep -Seconds 25 # Dare tempo al master di riassegnare e al nuovo worker di ripartire
+
+    Write-Host "5. Riavvio worker1 per recupero capacità..."
+    docker-compose -f docker/docker-compose.yml start worker1 | Out-Null
+    Start-Sleep -Seconds 10
+
+    Write-ColorOutput "=== TEST CHECKPOINT REDUCE COMPLETATO ===" "Green"
+    Write-Host "VERIFICA NEI LOG:"
+    Write-Host "  - 'CHECKPOINT TROVATO - riparto da chiave' (worker riprende da checkpoint)"
+    Write-Host "  - 'saltate X chiavi già processate' (checkpoint funziona)"
+    Write-Host "  - 'Preservato checkpoint per ReduceTask' (master preserva checkpoint)"
+    Write-Host "  - 'assegno con checkpoint' o 'riassegno con checkpoint' (master passa checkpoint)"
+}
+
+function Test-Map-Failure {
+    Write-ColorOutput "=== TEST FALLIMENTO MAPPER ===" "Magenta"
+    Write-Host "Preparazione: verifica che il cluster sia operativo..."
+    Test-ClusterHealth
+
+    Write-Host "1. Forzo finestra di fase Map riavviando i master..."
+    docker-compose -f docker/docker-compose.yml restart master0 master1 master2 | Out-Null
+    Start-Sleep -Seconds 2
+
+    Write-Host "   Attesa che la fase Map sia attiva (o finestra utile)..."
+    $attempts = 0; $maxAttempts = 30; $mapActive = $false
+    while (-not $mapActive -and $attempts -lt $maxAttempts) {
+        try {
+            $logs = docker-compose -f docker/docker-compose.yml logs --tail=300 master0 master1 master2 2>$null
+            if ($logs -match "Assegnato MapTask|Riassegnato MapTask|MapTask.*InProgress|Fase Map|phase=Map") { $mapActive = $true; break }
+        } catch {}
+        $attempts++; if ($attempts -lt $maxAttempts) { Write-Host "   Tentativo $attempts/$maxAttempts - attesa fase Map..."; Start-Sleep -Seconds 2 }
+    }
+    if ($mapActive) { Write-Host "   Fase Map rilevata, procedo" } else { Write-Host "   ATTENZIONE: Fase Map non rilevata, procedo comunque" }
+
+    Write-Host "2. Simulazione crash mapper (stop worker1)..."
+    docker-compose -f docker/docker-compose.yml stop worker1 | Out-Null
+    Start-Sleep -Seconds 5
+
+    Write-Host "3. Attesa riassegnazione MapTask..."
+    Start-Sleep -Seconds 15
+
+    Write-Host "4. Riavvio worker1..."
+    docker-compose -f docker/docker-compose.yml start worker1 | Out-Null
+    Start-Sleep -Seconds 10
+
+    Write-ColorOutput "=== TEST FALLIMENTO MAPPER COMPLETATO ===" "Green"
+    Write-Host "Verifica nei log: 'Assegnato/Riassegnato MapTask', 'timeout', 'worker morto'"
+}
+
 function Backup-Data {
     Write-ColorOutput "=== BACKUP DATI CLUSTER ===" "Yellow"
     Write-Host ""
@@ -627,6 +740,12 @@ switch ($Action.ToLower()) {
             Write-ColorOutput "Errore durante la copia dei file di output" "Red"
             exit 1
         }
+    }
+    "test-reduce-checkpoint" {
+        Test-Reduce-Checkpoint
+    }
+    "test-map-failure" {
+        Test-Map-Failure
     }
     "add-master" {
         Write-ColorOutput "=== AGGIUNTA MASTER ===" "Cyan"

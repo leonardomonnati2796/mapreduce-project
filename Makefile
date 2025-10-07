@@ -6,6 +6,15 @@ SHELL := /bin/sh
 # PowerShell command per Windows
 PS_CMD := powershell -ExecutionPolicy Bypass -File
 
+# Non mostra i comandi del recipe su terminale (stampa solo gli output)
+.SILENT:
+
+# Base URL del dashboard (parametrizzabile per ambienti non-locali)
+DASHBOARD_URL ?= http://localhost:8080
+
+# Base URL del dashboard (parametrizzabile per ambienti non-locali)
+DASHBOARD_URL ?= http://localhost:8080
+
 # Verifica se siamo su Windows
 ifeq ($(OS),Windows_NT)
 	DOCKER_MANAGER := $(PS_CMD) scripts/docker-manager.ps1
@@ -13,7 +22,7 @@ else
 	DOCKER_MANAGER := echo "Errore: Questo progetto richiede Windows PowerShell per la gestione Docker"
 endif
 
-.PHONY: help start stop restart status logs health clean build test report backup copy-output dashboard dashboard-local fault-test leader-test worker-test mapper-test reduce-test recovery-test fault-advanced fault-leader-advanced fault-worker-advanced fault-mapper-advanced fault-reduce-advanced fault-network-advanced fault-storage-advanced fault-stress-advanced docker-start open-html mapreduce-test full-test verify-inputs diagnose mapreduce-quick start-and-test
+.PHONY: help start stop restart status logs health clean build test report backup copy-output dashboard dashboard-local fault-test leader-test worker-test mapper-test reduce-test recovery-test fault-advanced fault-leader-advanced fault-worker-advanced fault-mapper-advanced fault-reduce-advanced fault-network-advanced fault-storage-advanced fault-stress-advanced docker-start open-html mapreduce-test full-test verify-inputs diagnose
 
 # Comando di default - mostra l'aiuto
 help:
@@ -22,23 +31,22 @@ help:
 	@echo "AVVIO E GESTIONE CLUSTER:"
 	@echo "  make docker-start - Avvia Docker Desktop automaticamente"
 	@echo "  make start        - Avvia il cluster MapReduce completo (con build)"
-	@echo "  make start-fast   - Avvia il cluster velocemente (senza rebuild)"
-	@echo "  make start-quick  - Avvio super veloce (solo se già configurato)"
 	@echo "  make stop         - Ferma il cluster"
 	@echo "  make restart      - Riavvia il cluster"
 	@echo "  make status       - Mostra lo stato del cluster"
 	@echo "  make logs         - Mostra i log in tempo reale"
 	@echo ""
 	@echo "TEST MAPREDUCE E FAULT TOLERANCE:"
-	@echo "  make start-and-test - Avvia cluster e esegue test MapReduce (ottimizzato)"
 	@echo "  make mapreduce-test - Test MapReduce (richiede cluster già avviato)"
-	@echo "  make mapreduce-quick - Test MapReduce veloce (solo se cluster già avviato)"
+
 	@echo "  make full-test      - Test completo: avvio + MapReduce + fault tolerance"
 	@echo "  make verify-inputs  - Verifica presenza file di input Words.txt"
 	@echo "  make health         - Controlla la salute del cluster"
 	@echo "  make test           - Esegue test di fault tolerance"
 	@echo "  make dashboard     - Apre il dashboard nel browser"
 	@echo "  make open-html      - Apre il dashboard nel browser"
+	@echo "  make logs-checkpoint-live - Log live dei master filtrati per checkpoint reduce"
+	@echo "  make logs-mapper-live     - Log live dei master filtrati per fase Map"
 	@echo ""
 	@echo "TEST FAULT TOLERANCE SPECIFICI (5 funzionalità):"
 	@echo "  make fault-test     - Test completo di fault tolerance"
@@ -81,32 +89,6 @@ verify-inputs:
 	@echo "✓ Words2.txt trovato"
 	@echo "✓ Words3.txt trovato"
 	@echo "✓ Tutti i file di input sono presenti!"
-
-# Comando ottimizzato: avvio + test MapReduce senza rebuild
-start-and-test: verify-inputs
-	@echo "=== AVVIO CLUSTER E TEST MAPREDUCE OTTIMIZZATO ==="
-	@echo "1. Verifica e avvio Docker Desktop..."
-	@powershell -Command "if (-not (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)) { Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'; Start-Sleep -Seconds 30; Write-Host 'Docker Desktop avviato!' } else { Write-Host 'Docker Desktop gia in esecuzione!' }"
-	@echo "2. Avvio cluster MapReduce (senza rebuild)..."
-	$(DOCKER_MANAGER) start-fast
-	@echo "3. Attesa stabilizzazione cluster (10 secondi per completare avvio container)..."
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "4. Verifica stato container prima del health check..."
-	@powershell -Command "docker-compose -f docker/docker-compose.yml ps"
-	@echo "5. Verifica stato cluster..."
-	$(DOCKER_MANAGER) health
-	@echo "6. Attesa completamento job MapReduce (25 secondi)..."
-	@powershell -Command "Start-Sleep -Seconds 25"
-	@echo "7. Verifica completamento job..."
-	$(DOCKER_MANAGER) health
-	@echo "8. Copia file di output..."
-	$(DOCKER_MANAGER) copy-output
-	@echo "9. Verifica file di output generati..."
-	@powershell -Command "if (Test-Path 'data\output\final-output.txt') { Write-Host '✓ File finale generato: data\output\final-output.txt' -ForegroundColor Green } else { Write-Host '✗ File finale non trovato' -ForegroundColor Red }"
-	@powershell -Command "if (Test-Path 'data\output\mr-out-0') { Write-Host '✓ File mr-out-0 generato' -ForegroundColor Green } else { Write-Host '✗ File mr-out-0 non trovato' -ForegroundColor Red }"
-	@powershell -Command "if (Test-Path 'data\output\mr-out-1') { Write-Host '✓ File mr-out-1 generato' -ForegroundColor Green } else { Write-Host '✗ File mr-out-1 non trovato' -ForegroundColor Red }"
-	@powershell -Command "if (Test-Path 'data\output\mr-out-2') { Write-Host '✓ File mr-out-2 generato' -ForegroundColor Green } else { Write-Host '✗ File mr-out-2 non trovato' -ForegroundColor Red }"
-	@echo "=== AVVIO E TEST MAPREDUCE COMPLETATO ==="
 
 # Test completo MapReduce sui 3 file (assume cluster già avviato)
 mapreduce-test: verify-inputs
@@ -186,22 +168,9 @@ start:
 	@echo "Verifica finale stato cluster..."
 	$(DOCKER_MANAGER) health
 
-# Versione veloce - usa immagini esistenti se disponibili
-start-fast:
-	@echo "Avvio rapido cluster MapReduce..."
-	@powershell -Command "if (-not (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)) { Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'; Start-Sleep -Seconds 15; Write-Host 'Docker Desktop avviato!' } else { Write-Host 'Docker Desktop gia in esecuzione!' }"
-	$(DOCKER_MANAGER) start-fast
-	@echo "Attesa stabilizzazione cluster (10 secondi per completare avvio container)..."
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "Verifica stato container prima del health check..."
-	@powershell -Command "docker-compose -f docker/docker-compose.yml ps"
-	@echo "Verifica finale stato cluster..."
-	$(DOCKER_MANAGER) health
 
-# Versione super veloce - solo se tutto è già pronto
-start-quick:
-	@echo "Avvio super rapido (solo se cluster già configurato)..."
-	$(DOCKER_MANAGER) start-quick
+
+
 
 stop:
 	$(DOCKER_MANAGER) stop
@@ -229,9 +198,20 @@ open-html:
 	@echo "Apertura dashboard nel browser..."
 	@powershell -NoProfile -Command "Start-Process 'http://localhost:8080'"
 
-# Test fault tolerance specifici
+# Test fault tolerance orchestrato (usa i target specifici già migliorati)
 fault-test:
-	$(DOCKER_MANAGER) health -FaultTest
+	@echo "=== TEST FAULT TOLERANCE (cluster già avviato) ==="
+	@echo "1/5) Elezione leader e recovery stato"
+	$(MAKE) leader-test
+	@echo "2/5) Fallimenti worker e heartbeat"
+	$(MAKE) worker-test
+	@echo "3/5) Fallimenti mapper e recovery"
+	$(MAKE) mapper-test
+	@echo "4/5) Fallimenti reduce e recovery (checkpoint/resume)"
+	$(MAKE) reduce-test
+	@echo "5/5) Recovery completo del sistema"
+	$(MAKE) recovery-test
+	@echo "=== TUTTI I TEST DI FAULT TOLERANCE COMPLETATI ==="
 
 # Test avanzati con script dedicato
 fault-advanced:
@@ -260,102 +240,67 @@ fault-stress-advanced:
 
 # Test delle 5 funzionalità di fault tolerance
 leader-test:
-	@echo "=== TEST 1/5: ELECTIONE LEADER E RECOVERY STATO ==="
-	@echo "1. Avvio cluster..."
-	$(DOCKER_MANAGER) start
-	@echo "2. Attesa stabilizzazione..."
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "3. Test elezione leader..."
+	@echo "=== TEST 1/5: ELECTIONE LEADER E RECOVERY STATO (cluster già avviato) ==="
+	@echo "1. Stato iniziale del cluster..."
 	$(DOCKER_MANAGER) health
-	@echo "4. Simulazione guasto leader..."
-	docker-compose -f docker/docker-compose.yml stop master0
-	@powershell -Command "Start-Sleep -Seconds 5"
-	@echo "5. Verifica nuovo leader..."
-	$(DOCKER_MANAGER) health
-	@echo "6. Ripristino leader..."
-	docker-compose -f docker/docker-compose.yml start master0
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "7. Verifica recovery stato..."
+	@echo "2-5. Gestione elezione leader via dashboard API (identifica leader, ferma leader corrente, verifica nuovo leader, ripristina)..."
+	$(PS_CMD) scripts/leader-test.ps1 -DashboardUrl $(DASHBOARD_URL)
+	@echo "6. Verifica stato finale cluster..."
 	$(DOCKER_MANAGER) health
 	@echo "✓ Test elezione leader completato!"
 
 worker-test:
-	@echo "=== TEST 2/5: FALLIMENTI WORKER E HEARTBEAT ==="
-	@echo "1. Avvio cluster..."
-	$(DOCKER_MANAGER) start
-	@echo "2. Attesa stabilizzazione..."
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "3. Verifica worker attivi..."
+	@echo "=== TEST 2/5: FALLIMENTI WORKER E HEARTBEAT (cluster già avviato) ==="
+	@echo "1. Verifica worker attivi..."
 	$(DOCKER_MANAGER) health
-	@echo "4. Simulazione guasto worker..."
+	@echo "2. Simulazione guasto worker..."
 	docker-compose -f docker/docker-compose.yml stop worker1
 	@powershell -Command "Start-Sleep -Seconds 5"
-	@echo "5. Verifica heartbeat e recovery..."
+	@echo "3. Verifica heartbeat e recovery..."
 	$(DOCKER_MANAGER) health
-	@echo "6. Ripristino worker..."
+	@echo "4. Ripristino worker..."
 	docker-compose -f docker/docker-compose.yml start worker1
 	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "7. Verifica worker ripristinato..."
+	@echo "5. Verifica worker ripristinato..."
 	$(DOCKER_MANAGER) health
 	@echo "✓ Test fallimenti worker completato!"
 
 mapper-test:
-	@echo "=== TEST 3/5: FALLIMENTI MAPPER E RECOVERY ==="
-	@echo "1. Avvio cluster..."
-	$(DOCKER_MANAGER) start
-	@echo "2. Attesa avvio job..."
-	@powershell -Command "Start-Sleep -Seconds 15"
-	@echo "3. Verifica stato mapper..."
-	$(DOCKER_MANAGER) health
-	@echo "4. Simulazione guasto durante mappatura..."
-	docker-compose -f docker/docker-compose.yml stop worker1
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "5. Verifica recovery mapper..."
-	$(DOCKER_MANAGER) health
-	@echo "6. Ripristino worker..."
-	docker-compose -f docker/docker-compose.yml start worker1
-	@powershell -Command "Start-Sleep -Seconds 15"
-	@echo "7. Verifica completamento job..."
+	@echo "=== TEST 3/5: FALLIMENTI MAPPER E RECOVERY (fase Map) ==="
+	@echo "1. Apertura finestra fase Map (riavvio rapido master) e simulazione crash/recovery mapper"
+	$(DOCKER_MANAGER) test-map-failure
+	@echo "2. Log recovery mapper (ultimi 200 righe dei master)"
+	@powershell -Command "docker-compose -f docker/docker-compose.yml logs --tail=200 master0 master1 master2 | Select-String -Pattern 'MapTask|Assegnato MapTask|Riassegnato MapTask|timeout|worker morto'"
+	@echo "3. Verifica stato finale cluster..."
 	$(DOCKER_MANAGER) health
 	@echo "✓ Test fallimenti mapper completato!"
 
 reduce-test:
-	@echo "=== TEST 4/5: FALLIMENTI REDUCE E RECOVERY ==="
-	@echo "1. Avvio cluster..."
-	$(DOCKER_MANAGER) start
-	@echo "2. Attesa completamento fase map..."
-	@powershell -Command "Start-Sleep -Seconds 30"
-	@echo "3. Verifica stato reduce..."
+	@echo "=== TEST 4/5: FALLIMENTI REDUCE E RECOVERY (checkpoint/resume) ==="
+	@echo "1. Apertura finestra fase Reduce (riavvio rapido master) e job attivo..."
+	@echo "   (Attesa 5 secondi per permettere l'assegnazione dei ReduceTask)"
+	@powershell -Command "Start-Sleep -Seconds 5"
+	@echo "2. Avvio scenario: crash a metà reduce e ripartenza dal checkpoint"
+	$(DOCKER_MANAGER) test-reduce-checkpoint
+	@echo "3. Log checkpoint reduce (ultimi 200 righe dei master)"
+	@powershell -Command "docker-compose -f docker/docker-compose.yml logs --tail=200 master0 master1 master2 | Select-String -Pattern 'ReduceTask .*checkpoint|assegno con checkpoint|riassegno con checkpoint|CHECKPOINT TROVATO|saltate .* chiavi già processate|Preservato checkpoint|checkpoint salvato'"
+	@echo "4. Verifica stato finale cluster"
 	$(DOCKER_MANAGER) health
-	@echo "4. Simulazione guasto durante riduzione..."
-	docker-compose -f docker/docker-compose.yml stop worker1
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "5. Verifica recovery reduce..."
-	$(DOCKER_MANAGER) health
-	@echo "6. Ripristino worker..."
-	docker-compose -f docker/docker-compose.yml start worker1
-	@powershell -Command "Start-Sleep -Seconds 20"
-	@echo "7. Verifica completamento job..."
-	$(DOCKER_MANAGER) health
-	@echo "✓ Test fallimenti reduce completato!"
+	@echo "✓ Test fallimenti reduce (checkpoint/resume) completato!"
 
 recovery-test:
-	@echo "=== TEST 5/5: RECOVERY COMPLETO DEL SISTEMA ==="
-	@echo "1. Avvio cluster..."
-	$(DOCKER_MANAGER) start
-	@echo "2. Attesa stabilizzazione..."
-	@powershell -Command "Start-Sleep -Seconds 10"
-	@echo "3. Backup stato iniziale..."
+	@echo "=== TEST 5/5: RECOVERY COMPLETO DEL SISTEMA (cluster già avviato) ==="
+	@echo "1. Backup stato iniziale..."
 	$(DOCKER_MANAGER) backup
-	@echo "4. Simulazione guasti multipli..."
+	@echo "2. Simulazione guasti multipli..."
 	docker-compose -f docker/docker-compose.yml stop master1 worker1
 	@powershell -Command "Start-Sleep -Seconds 5"
-	@echo "5. Verifica recovery automatico..."
+	@echo "3. Verifica recovery automatico..."
 	$(DOCKER_MANAGER) health
-	@echo "6. Ripristino servizi..."
+	@echo "4. Ripristino servizi..."
 	docker-compose -f docker/docker-compose.yml start master1 worker1
 	@powershell -Command "Start-Sleep -Seconds 15"
-	@echo "7. Verifica sistema completamente ripristinato..."
+	@echo "5. Verifica sistema completamente ripristinato..."
 	$(DOCKER_MANAGER) health
 	@echo "✓ Test recovery completo completato!"
 
@@ -397,25 +342,7 @@ test-complete: verify-inputs start mapreduce-test fault-tolerance-complete
 	@echo "✓ File di output generati in data/output/"
 	@echo "🎉 PROGETTO COMPLETAMENTE FUNZIONANTE!"
 
-# Test MapReduce veloce (solo se cluster già avviato)
-mapreduce-quick:
-	@echo "=== TEST MAPREDUCE VELOCE ==="
-	@echo "1. Verifica cluster già avviato..."
-	@powershell -Command "docker-compose -f docker/docker-compose.yml ps"
-	@echo "2. Verifica stato cluster..."
-	$(DOCKER_MANAGER) health
-	@echo "3. Attesa completamento job MapReduce (15 secondi)..."
-	@powershell -Command "Start-Sleep -Seconds 15"
-	@echo "4. Verifica completamento job..."
-	$(DOCKER_MANAGER) health
-	@echo "5. Copia file di output..."
-	$(DOCKER_MANAGER) copy-output
-	@echo "6. Verifica file di output generati..."
-	@powershell -Command "if (Test-Path 'data\output\final-output.txt') { Write-Host '✓ File finale generato: data\output\final-output.txt' -ForegroundColor Green } else { Write-Host '✗ File finale non trovato' -ForegroundColor Red }"
-	@powershell -Command "if (Test-Path 'data\output\mr-out-0') { Write-Host '✓ File mr-out-0 generato' -ForegroundColor Green } else { Write-Host '✗ File mr-out-0 non trovato' -ForegroundColor Red }"
-	@powershell -Command "if (Test-Path 'data\output\mr-out-1') { Write-Host '✓ File mr-out-1 generato' -ForegroundColor Green } else { Write-Host '✗ File mr-out-1 non trovato' -ForegroundColor Red }"
-	@powershell -Command "if (Test-Path 'data\output\mr-out-2') { Write-Host '✓ File mr-out-2 generato' -ForegroundColor Green } else { Write-Host '✗ File mr-out-2 non trovato' -ForegroundColor Red }"
-	@echo "=== TEST MAPREDUCE VELOCE COMPLETATO ==="
+
 
 # Diagnostica problemi cluster
 diagnose:
@@ -437,3 +364,14 @@ diagnose:
 	@echo ""
 	@echo "6. Health check finale..."
 	$(DOCKER_MANAGER) health
+
+# Log live dei master filtrati per checkpoint reduce
+.PHONY: logs-checkpoint-live
+logs-checkpoint-live:
+	$(PS_CMD) scripts/logs-checkpoint-live.ps1
+
+# Log live dei master filtrati per fase Map/mapper
+.PHONY: logs-mapper-live
+logs-mapper-live:
+	@echo "=== LOG LIVE MAPPER/RECOVERY (premi Ctrl+C per uscire) ==="
+	$(PS_CMD) scripts/logs-mapper-live.ps1

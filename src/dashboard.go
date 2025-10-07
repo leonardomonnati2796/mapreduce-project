@@ -251,6 +251,8 @@ func (d *Dashboard) setupRoutes() {
 		api.GET("/jobs", d.getJobs)
 		api.GET("/workers", d.getWorkers)
 		api.GET("/masters", d.getMasters)
+		// New: Raft leader endpoint (explicit leader discovery)
+		api.GET("/raft/leader", d.getRaftLeader)
 		api.GET("/status", d.getStatus)
 
 		// Action routes for buttons
@@ -306,6 +308,51 @@ func (d *Dashboard) setupRoutes() {
 	d.router.GET("/jobs", d.getJobsPage)
 	d.router.GET("/workers", d.getWorkersPage)
 	d.router.GET("/output", d.getOutputPage)
+}
+
+// getRaftLeader restituisce il leader Raft attuale interrogando i master via RPC
+func (d *Dashboard) getRaftLeader(c *gin.Context) {
+	// Ottieni gli indirizzi RPC dei master dalla configurazione
+	rpcAddrs := getMasterRpcAddresses()
+	if len(rpcAddrs) == 0 {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "No RPC addresses configured",
+			"details": "master rpc addresses are empty",
+		})
+		return
+	}
+
+	// Tenta in sequenza di contattare i master per trovare chi è leader
+	for i, rpcAddr := range rpcAddrs {
+		client, err := rpc.DialHTTP("tcp", rpcAddr)
+		if err != nil {
+			continue
+		}
+		var args GetMasterInfoArgs
+		var reply MasterInfoReply
+		callErr := client.Call("Master.GetMasterInfo", &args, &reply)
+		client.Close()
+		if callErr != nil {
+			continue
+		}
+		if reply.IsLeader {
+			// Leader trovato
+			c.JSON(http.StatusOK, gin.H{
+				"id":          i,
+				"rpc_addr":    rpcAddr,
+				"leader":      true,
+				"leader_addr": reply.LeaderAddress,
+				"raft_state":  reply.RaftState,
+			})
+			return
+		}
+	}
+
+	// Se non trovato, restituisci 503
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"error":   "No leader found",
+		"details": "none of the masters reported IsLeader=true",
+	})
 }
 
 // getIndex restituisce la pagina principale

@@ -1,0 +1,8 @@
+=== RISULTATO FINALE MAPREDUCE ===
+Generato il: 2025-10-06 16:46:38
+Numero di reducer: 3
+=====================================
+
+=====================================
+TOTALE RECORD PROCESSATI: 0
+=====================================

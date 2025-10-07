@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/rpc"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -80,11 +82,64 @@ func runMaster() {
 		return
 	}
 
-	files := strings.Split(os.Args[3], ",")
-	if len(files) == 0 || (len(files) == 1 && files[0] == "") {
-		fmt.Fprintf(os.Stderr, "No input files specified\n")
+	// Resolve input files dynamically
+	rawArg := os.Args[3]
+	envGlob := os.Getenv("MAPREDUCE_INPUT_GLOB")
+	files := []string{}
+
+	// 1) If env glob is provided, use it
+	if strings.TrimSpace(envGlob) != "" {
+		if matches, err := filepath.Glob(envGlob); err == nil && len(matches) > 0 {
+			files = append(files, matches...)
+		}
+	}
+
+	// 2) If argument contains wildcard, treat as glob pattern
+	if len(files) == 0 && (strings.Contains(rawArg, "*") || strings.Contains(rawArg, "?")) {
+		if matches, err := filepath.Glob(rawArg); err == nil && len(matches) > 0 {
+			files = append(files, matches...)
+		}
+	}
+
+	// 3) If argument is a directory, take all .txt files inside
+	if len(files) == 0 {
+		if fi, err := os.Stat(rawArg); err == nil && fi.IsDir() {
+			entries, _ := os.ReadDir(rawArg)
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".txt") {
+					files = append(files, filepath.Join(rawArg, e.Name()))
+				}
+			}
+		}
+	}
+
+	// 4) Fallback: treat as comma-separated explicit list
+	if len(files) == 0 {
+		for _, f := range strings.Split(rawArg, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				files = append(files, f)
+			}
+		}
+	}
+
+	// Validate
+	if len(files) == 0 {
+		fmt.Fprintf(os.Stderr, "No input files resolved (arg='%s', env MAPREDUCE_INPUT_GLOB='%s')\n", rawArg, envGlob)
 		return
 	}
+
+	// Normalize to absolute paths for consistency inside container
+	for i := range files {
+		if abs, err := filepath.Abs(files[i]); err == nil {
+			files[i] = abs
+		}
+	}
+	// Stable ordering
+	sort.Strings(files)
+
+	// Log the input files parsed for visibility/debugging
+	LogInfo("Master %d input files: %v", me, files)
 
 	raftAddrs := getMasterRaftAddresses()
 	rpcAddrs := getMasterRpcAddresses()

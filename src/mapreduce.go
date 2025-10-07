@@ -240,6 +240,14 @@ func executeReduceTask(task *Task, reducef func(string, []string) string) {
 	}
 	ck := loadReduceCheckpoint(checkpointFile) // {LastKey string, Processed int}
 
+	// Log dettagliato del checkpoint
+	if ck.LastKey != "" {
+		LogInfo("ReduceTask %d: CHECKPOINT TROVATO - riparto da chiave '%s' (già processate %d chiavi)",
+			task.TaskID, ck.LastKey, ck.Processed)
+	} else {
+		LogInfo("ReduceTask %d: NESSUN CHECKPOINT - inizio da zero", task.TaskID)
+	}
+
 	// 2) Aggrega input
 	keyValues := make(map[string][]string)
 	for mapTaskID := 0; mapTaskID < task.NMap; mapTaskID++ {
@@ -274,9 +282,11 @@ func executeReduceTask(task *Task, reducef func(string, []string) string) {
 	}
 
 	processed := 0
+	skipped := 0
 	for _, key := range keys {
 		// riprendi dal checkpoint se presente
 		if ck.LastKey != "" && key <= ck.LastKey {
+			skipped++
 			continue
 		}
 		values := keyValues[key]
@@ -285,7 +295,14 @@ func executeReduceTask(task *Task, reducef func(string, []string) string) {
 		processed++
 		if processed%100 == 0 {
 			saveReduceCheckpoint(checkpointFile, key, processed)
+			LogInfo("ReduceTask %d: checkpoint salvato - chiave '%s', processate %d chiavi",
+				task.TaskID, key, processed)
 		}
+	}
+
+	if skipped > 0 {
+		LogInfo("ReduceTask %d: saltate %d chiavi già processate (checkpoint), processate %d nuove chiavi",
+			task.TaskID, skipped, processed)
 	}
 	// checkpoint finale
 	saveReduceCheckpoint(checkpointFile, "", processed)

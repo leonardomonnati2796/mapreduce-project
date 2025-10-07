@@ -46,6 +46,10 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - INSTANCE_ID=${INSTANCE_ID}
       - ENVIRONMENT=aws
+      - TMP_PATH=/tmp/mapreduce
+      - MAPREDUCE_INPUT_GLOB=/app/data/*.txt
+    volumes:
+      - ../data:/app/data:ro
     depends_on:
       - mapreduce-dashboard
     restart: unless-stopped
@@ -70,6 +74,10 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - INSTANCE_ID=${INSTANCE_ID}
       - ENVIRONMENT=aws
+      - TMP_PATH=/tmp/mapreduce
+      - MAPREDUCE_INPUT_GLOB=/app/data/*.txt
+    volumes:
+      - ../data:/app/data:ro
     depends_on:
       - mapreduce-dashboard
     restart: unless-stopped
@@ -94,6 +102,10 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - INSTANCE_ID=${INSTANCE_ID}
       - ENVIRONMENT=aws
+      - TMP_PATH=/tmp/mapreduce
+      - MAPREDUCE_INPUT_GLOB=/app/data/*.txt
+    volumes:
+      - ../data:/app/data:ro
     depends_on:
       - mapreduce-dashboard
     restart: unless-stopped
@@ -118,6 +130,9 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - INSTANCE_ID=${INSTANCE_ID}
       - ENVIRONMENT=aws
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - ../data:/app/data:ro
     depends_on:
       - mapreduce-dashboard
     restart: unless-stopped
@@ -142,6 +157,9 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - INSTANCE_ID=${INSTANCE_ID}
       - ENVIRONMENT=aws
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - ../data:/app/data:ro
     depends_on:
       - mapreduce-dashboard
     restart: unless-stopped
@@ -166,6 +184,9 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - INSTANCE_ID=${INSTANCE_ID}
       - ENVIRONMENT=aws
+      - TMP_PATH=/tmp/mapreduce
+    volumes:
+      - ../data:/app/data:ro
     depends_on:
       - mapreduce-dashboard
     restart: unless-stopped

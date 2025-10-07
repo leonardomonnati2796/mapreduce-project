@@ -36,9 +36,10 @@ x-master-config: &master-config
     - mapreduce-net
   volumes:
     - intermediate-data:/tmp/mapreduce
-    - ${PWD}/data:/root/data
+    - ../data:/root/data
   environment:
     <<: *common-vars
+    MAPREDUCE_INPUT_GLOB: "/root/data/*.txt"
     # - RAFT_CLEAN_START: "true"  # Uncomment per pulire i dati Raft (solo per debug)
   restart: unless-stopped
   stop_grace_period: 30s
@@ -54,7 +55,7 @@ x-worker-config: &worker-config
     - mapreduce-net
   volumes:
     - intermediate-data:/tmp/mapreduce
-    - ${PWD}/data:/root/data
+    - ../data:/root/data
   environment:
     RPC_ADDRESSES: "master0:8000,master1:8001,master2:8002"
     TMP_PATH: "/tmp/mapreduce"
@@ -63,8 +64,8 @@ x-worker-config: &worker-config
   restart: on-failure
   stop_grace_period: 30s
 
-# File di input centralizzato (multipli)
-x-input-file: &input-file "/root/data/Words.txt,/root/data/Words2.txt,/root/data/Words3.txt"
+# File di input: usa glob dinamico all'interno del container
+x-input-file: &input-file "/root/data/*.txt"
 
 services:
   master0:
@@ -162,7 +163,7 @@ services:
       - "8080:8080"
     volumes:
       - intermediate-data:/tmp/mapreduce
-      - ${PWD}/data:/root/data
+      - ../data:/root/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       RAFT_ADDRESSES: "master0:1234,master1:1234,master2:1234"

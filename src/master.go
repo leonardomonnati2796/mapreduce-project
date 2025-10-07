@@ -17,6 +17,9 @@ import (
 	"sync"
 	"time"
 
+	crand "crypto/rand"
+	"encoding/binary"
+
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
@@ -515,7 +518,15 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 					continue
 				}
 
-				taskToDo = &Task{Type: ReduceTask, TaskID: id, NMap: len(m.mapTasks)}
+				// Riprendi da eventuale checkpoint precedente
+				checkpoint := ""
+				if m.reducerCheckpoint != nil {
+					if cp, ok := m.reducerCheckpoint[id]; ok {
+						checkpoint = cp
+						LogInfo("[Master] ReduceTask %d: assegno con checkpoint %s", id, cp)
+					}
+				}
+				taskToDo = &Task{Type: ReduceTask, TaskID: id, NMap: len(m.mapTasks), Checkpoint: checkpoint}
 				m.reduceTasks[id].State = InProgress
 				m.reduceTasks[id].StartTime = time.Now()
 				LogInfo("[Master] Assegnato ReduceTask %d", id)
@@ -527,7 +538,15 @@ func (m *Master) AssignTask(args *RequestTaskArgs, reply *Task) error {
 					m.reduceTasks[id].State = Idle
 					m.reduceTasksDone--
 					m.cleanupInvalidReduceTask(id)
-					taskToDo = &Task{Type: ReduceTask, TaskID: id, NMap: len(m.mapTasks)}
+					// Riprendi da eventuale checkpoint precedente
+					checkpoint := ""
+					if m.reducerCheckpoint != nil {
+						if cp, ok := m.reducerCheckpoint[id]; ok {
+							checkpoint = cp
+							LogInfo("[Master] ReduceTask %d: riassegno con checkpoint %s", id, cp)
+						}
+					}
+					taskToDo = &Task{Type: ReduceTask, TaskID: id, NMap: len(m.mapTasks), Checkpoint: checkpoint}
 					m.reduceTasks[id].State = InProgress
 					m.reduceTasks[id].StartTime = time.Now()
 					LogInfo("[Master] Riassegnato ReduceTask %d", id)
@@ -831,8 +850,13 @@ func (m *Master) RecoveryState() {
 	LogInfo("[Master] RecoveryState completato: isDone=%v, phase=%v", m.isDone, m.phase)
 }
 func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddrs []string) (*Master, error) {
-	// Inizializza il generatore di numeri casuali per il delay
-	rand.Seed(time.Now().UnixNano() + int64(me))
+	// Inizializza il generatore di numeri casuali con seed realmente indipendente per nodo
+	var seedBytes [8]byte
+	if _, err := crand.Read(seedBytes[:]); err == nil {
+		rand.Seed(int64(binary.LittleEndian.Uint64(seedBytes[:])) + time.Now().UnixNano() + int64(me*9973))
+	} else {
+		rand.Seed(time.Now().UnixNano() + int64(me*9973))
+	}
 
 	m := &Master{
 		inputFiles: files, nReduce: nReduce,
@@ -862,10 +886,9 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	config.LocalID = raft.ServerID(raftAddrs[me])
 	config.Logger = hclog.New(&hclog.LoggerOptions{Name: fmt.Sprintf("Raft-%s", raftAddrs[me]), Level: hclog.Info, Output: os.Stderr})
 
-	// Configura timeout più equi per l'elezione
-	// Aggiunge variabilità ai timeout per evitare elezioni simultanee
-	baseElectionTimeout := 1000 * time.Millisecond
-	randomOffset := time.Duration(rand.Intn(500)) * time.Millisecond // 0-500ms di offset
+	// Configura timeout più equi per l'elezione (maggiore jitter e indipendenza)
+	baseElectionTimeout := 300 * time.Millisecond
+	randomOffset := time.Duration(300+rand.Intn(1200)) * time.Millisecond // 300–1500ms di offset
 	config.ElectionTimeout = baseElectionTimeout + randomOffset
 	config.HeartbeatTimeout = 200 * time.Millisecond
 	config.LeaderLeaseTimeout = 150 * time.Millisecond // Deve essere < HeartbeatTimeout
@@ -972,10 +995,10 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 	go m.startClusterManagementMonitor()
 
 	// Implementa un sistema di elezione più equo
-	// Solo un master alla volta può fare il bootstrap, con delay casuale
+	// Solo un master alla volta può fare il bootstrap, con delay casuale non correlato
 	go func() {
-		// Delay casuale per evitare elezioni simultanee
-		randomDelay := time.Duration(rand.Intn(3000)) * time.Millisecond // 0-3 secondi
+		// Delay casuale per evitare elezioni simultanee (0–5s)
+		randomDelay := time.Duration(rand.Intn(5000)) * time.Millisecond
 		time.Sleep(randomDelay)
 
 		// Controlla se il cluster è già stato bootstrappato
@@ -1165,6 +1188,17 @@ func MakeMaster(files []string, nReduce int, me int, raftAddrs []string, rpcAddr
 						if info.State == InProgress && now.Sub(info.StartTime) > workerTimeout {
 							LogWarn("[Master] Reset ReduceTask %d per worker morto %s", i, workerID)
 							m.reduceTasks[i].State = Idle
+
+							// Per ReduceTask, preserva il checkpoint se esiste
+							checkpointPath := fmt.Sprintf("data/output/mr-out-%d.checkpoint.json", i)
+							if _, err := os.Stat(checkpointPath); err == nil {
+								// Checkpoint esiste, lo preserviamo per la riassegnazione
+								if m.reducerCheckpoint == nil {
+									m.reducerCheckpoint = make(map[int]string)
+								}
+								m.reducerCheckpoint[i] = checkpointPath
+								LogInfo("[Master] Preservato checkpoint per ReduceTask %d: %s", i, checkpointPath)
+							}
 
 							// Applica il reset tramite Raft per consistency
 							cmd := LogCommand{Operation: "reset-task", TaskID: i}
