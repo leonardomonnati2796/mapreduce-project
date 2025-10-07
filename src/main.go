@@ -87,10 +87,35 @@ func runMaster() {
 	envGlob := os.Getenv("MAPREDUCE_INPUT_GLOB")
 	files := []string{}
 
-	// 1) If env glob is provided, use it
-	if strings.TrimSpace(envGlob) != "" {
-		if matches, err := filepath.Glob(envGlob); err == nil && len(matches) > 0 {
-			files = append(files, matches...)
+	// Check if S3 is enabled and input is from S3
+	if os.Getenv("S3_SYNC_ENABLED") == "true" && strings.HasPrefix(envGlob, "s3://") {
+		LogInfo("S3 input detected, downloading files from S3...")
+		
+		// Initialize S3 manager
+		s3Config := GetS3ConfigFromEnv()
+		if s3Manager, err := NewS3StorageManager(s3Config); err == nil {
+			// Download input files from S3
+			localInputPath := "/tmp/mapreduce/input"
+			if err := s3Manager.DownloadInputData(localInputPath); err != nil {
+				LogError("Failed to download input data from S3: %v", err)
+			} else {
+				// Get list of downloaded files
+				if inputFiles, err := s3Manager.GetInputFilesList(); err == nil {
+					for _, fileName := range inputFiles {
+						files = append(files, filepath.Join(localInputPath, fileName))
+					}
+					LogInfo("Downloaded %d input files from S3", len(files))
+				}
+			}
+		} else {
+			LogError("Failed to initialize S3 manager: %v", err)
+		}
+	} else {
+		// 1) If env glob is provided, use it (local filesystem)
+		if strings.TrimSpace(envGlob) != "" {
+			if matches, err := filepath.Glob(envGlob); err == nil && len(matches) > 0 {
+				files = append(files, matches...)
+			}
 		}
 	}
 

@@ -1,125 +1,183 @@
-# Terraform Variables for MapReduce AWS Deployment
-# Copy this file to terraform.tfvars and customize the values
+# MapReduce AWS Deployment Configuration
+# Copia questo file in terraform.tfvars e personalizza i valori
 
-# AWS Configuration
+# =============================================================================
+# AWS CONFIGURATION
+# =============================================================================
 aws_region = "us-east-1"
 aws_account_id = ""
 
-# Project Configuration
+# =============================================================================
+# PROJECT CONFIGURATION
+# =============================================================================
 project_name = "mapreduce"
-environment = "prod"
+environment = "production"
 version = "1.0.0"
 
-# GitHub Repository
-repo_url    = "https://github.com/your-user/your-repo.git"
+# =============================================================================
+# GITHUB REPOSITORY
+# =============================================================================
+# URL del repository Git contenente il codice sorgente
+repo_url = "https://github.com/your-username/mapreduce-project.git"
 repo_branch = "main"
 
-# EC2 Configuration
-instance_type = "t3.medium"
-min_instances = 2
-max_instances = 10
-desired_instances = 3
-key_pair_name = "mapreduce-key-pair"
+# =============================================================================
+# EC2 INSTANCES CONFIGURATION
+# =============================================================================
+# Numero di istanze
+master_count = 3
+worker_count = 3
 
-# Load Balancer Configuration
+# Tipi di istanze
+master_instance_type = "t3.medium"
+worker_instance_type = "t3.small"
+
+# Key Pair SSH
+key_pair_name = "mapreduce-key"
+# IMPORTANTE: Sostituisci con la tua chiave pubblica SSH
+public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... your-email@example.com"
+
+# =============================================================================
+# LOAD BALANCER CONFIGURATION
+# =============================================================================
 alb_name = "mapreduce-alb"
 alb_scheme = "internet-facing"
 alb_type = "application"
 alb_ip_address_type = "ipv4"
 
-# S3 Configuration
+# =============================================================================
+# S3 CONFIGURATION
+# =============================================================================
 s3_bucket_name = "mapreduce-storage"
 s3_backup_bucket = "mapreduce-backup"
 s3_terraform_bucket = "mapreduce-terraform-state"
+s3_sync_enabled = true
+s3_sync_interval = 60
+s3_encryption_enabled = true
+s3_versioning_enabled = true
+s3_lifecycle_enabled = true
 
-# Database Configuration (if using RDS)
+# =============================================================================
+# DATABASE CONFIGURATION (opzionale)
+# =============================================================================
 db_instance_class = "db.t3.micro"
 db_engine = "postgres"
 db_engine_version = "13.7"
 db_name = "mapreduce"
 db_username = "mapreduce"
-db_password = ""
+# IMPORTANTE: Sostituisci con una password sicura
+db_password = "your-secure-password"
 
-# Monitoring Configuration
+# =============================================================================
+# MONITORING CONFIGURATION
+# =============================================================================
 cloudwatch_log_group = "/aws/ec2/mapreduce"
 cloudwatch_retention_days = 30
 alarm_email = "admin@example.com"
 
-# Security Configuration
+# =============================================================================
+# SECURITY CONFIGURATION
+# =============================================================================
 allowed_cidr_blocks = ["0.0.0.0/0"]
 ssh_cidr_blocks = ["0.0.0.0/0"]
 http_cidr_blocks = ["0.0.0.0/0"]
 https_cidr_blocks = ["0.0.0.0/0"]
 
-# Application Configuration
+# =============================================================================
+# APPLICATION CONFIGURATION
+# =============================================================================
 app_port = 8080
 dashboard_port = 3000
 worker_port = 8081
 master_port = 8082
 
-# Docker Configuration
+# =============================================================================
+# DOCKER CONFIGURATION
+# =============================================================================
 docker_registry = ""
 docker_image_tag = "latest"
 docker_compose_file = "docker-compose.aws.yml"
 
-# Backup Configuration
+# =============================================================================
+# BACKUP CONFIGURATION
+# =============================================================================
 backup_schedule = "0 2 * * *"
 backup_retention_days = 30
 backup_encryption = true
 
-# Auto Scaling Configuration
+# =============================================================================
+# AUTO SCALING CONFIGURATION
+# =============================================================================
 scale_up_cooldown = 300
 scale_down_cooldown = 300
 target_cpu_utilization = 70
 target_memory_utilization = 80
 
-# Health Check Configuration
+# =============================================================================
+# HEALTH CHECK CONFIGURATION
+# =============================================================================
 health_check_path = "/health"
 health_check_interval = 30
 health_check_timeout = 5
 health_check_threshold = 2
 health_check_unhealthy_threshold = 3
 
-# Logging Configuration
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
 log_level = "info"
 log_format = "json"
 log_output = "stdout"
 
-# Performance Configuration
+# =============================================================================
+# PERFORMANCE CONFIGURATION
+# =============================================================================
 worker_threads = 4
 max_connections = 1000
 connection_timeout = 30
 read_timeout = 60
 write_timeout = 60
 
-# Security Headers
+# =============================================================================
+# SECURITY HEADERS
+# =============================================================================
 security_headers = true
 cors_origins = "*"
 cors_methods = "GET,POST,PUT,DELETE,OPTIONS"
 cors_headers = "Content-Type,Authorization"
 
-# Rate Limiting
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
 rate_limit_enabled = true
 rate_limit_requests = 100
 rate_limit_window = 60
 
-# SSL/TLS Configuration
+# =============================================================================
+# SSL/TLS CONFIGURATION
+# =============================================================================
 ssl_enabled = true
 ssl_certificate_arn = ""
 ssl_policy = "ELBSecurityPolicy-TLS-1-2-2017-01"
 
-# VPC Configuration
+# =============================================================================
+# VPC CONFIGURATION
+# =============================================================================
 vpc_cidr = "10.0.0.0/16"
 public_subnet_cidr_1 = "10.0.1.0/24"
 public_subnet_cidr_2 = "10.0.2.0/24"
 private_subnet_cidr_1 = "10.0.10.0/24"
 private_subnet_cidr_2 = "10.0.20.0/24"
 
-# Availability Zones
+# =============================================================================
+# AVAILABILITY ZONES
+# =============================================================================
 az_1 = "us-east-1a"
 az_2 = "us-east-1b"
 
-# Tags
+# =============================================================================
+# TAGS
+# =============================================================================
 tag_environment = "production"
 tag_project = "mapreduce"
 tag_owner = "devops"

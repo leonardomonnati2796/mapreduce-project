@@ -19,7 +19,7 @@ services:
       - DASHBOARD_PORT=${DASHBOARD_PORT:-3000}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - AWS_REGION=${AWS_REGION}
-      - S3_BUCKET=${S3_BUCKET_NAME}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       # Service Discovery - Dynamic IPs from user_data.sh
       - RAFT_ADDRESSES=${RAFT_ADDRESSES}
       - RPC_ADDRESSES=${RPC_ADDRESSES}
@@ -27,6 +27,12 @@ services:
       - MY_PRIVATE_IP=${MY_PRIVATE_IP}
       - MASTER_IPS=${MASTER_IPS}
       - WORKER_IPS=${WORKER_IPS}
+      # Additional service discovery variables
+      - TMP_PATH=${TMP_PATH:-/tmp/mapreduce}
+      - MAPREDUCE_INPUT_GLOB=${MAPREDUCE_INPUT_GLOB:-s3://${S3_BUCKET_NAME}/data/*.txt}
+      # S3 Configuration
+      - S3_SYNC_ENABLED=true
+      - S3_SYNC_INTERVAL=${S3_SYNC_INTERVAL:-60s}
       # Environment detection
       - DEPLOYMENT_ENV=aws
       - LOCAL_MODE=false

@@ -2252,6 +2252,110 @@ func (d *Dashboard) getS3StatsEndpoint(c *gin.Context) {
 	})
 }
 
+// uploadInputDataEndpoint carica file di input su S3
+func (d *Dashboard) uploadInputDataEndpoint(c *gin.Context) {
+	if d.s3Manager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "S3 storage non abilitato",
+		})
+		return
+	}
+
+	var request struct {
+		LocalPath string `json:"local_path" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	err := d.s3Manager.UploadInputData(request.LocalPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to upload input data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Input data uploaded to S3 successfully",
+	})
+}
+
+// downloadInputDataEndpoint scarica file di input da S3
+func (d *Dashboard) downloadInputDataEndpoint(c *gin.Context) {
+	if d.s3Manager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "S3 storage non abilitato",
+		})
+		return
+	}
+
+	var request struct {
+		LocalPath string `json:"local_path" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	err := d.s3Manager.DownloadInputData(request.LocalPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to download input data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Input data downloaded from S3 successfully",
+	})
+}
+
+// listInputFilesEndpoint elenca i file di input disponibili su S3
+func (d *Dashboard) listInputFilesEndpoint(c *gin.Context) {
+	if d.s3Manager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "S3 storage non abilitato",
+		})
+		return
+	}
+
+	files, err := d.s3Manager.GetInputFilesList()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to list input files",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    files,
+	})
+}
+
 // createS3Backup crea un backup S3
 func (d *Dashboard) createS3Backup(c *gin.Context) {
 	if d.s3Manager == nil {

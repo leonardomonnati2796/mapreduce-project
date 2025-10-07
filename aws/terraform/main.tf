@@ -186,90 +186,11 @@ resource "aws_lb" "mapreduce_alb" {
   }
 }
 
-# Target Group
-resource "aws_lb_target_group" "mapreduce_tg" {
-  name     = "${var.project_name}-tg"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = aws_vpc.mapreduce_vpc.id
+# Note: Target Group e Listener sono ora definiti in instances.tf
+# per gestire le istanze master separate
 
-  health_check {
-    enabled             = true
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-    timeout             = 5
-    interval            = 30
-    path                = "/health"
-    matcher             = "200"
-    port                = "traffic-port"
-    protocol            = "HTTP"
-  }
-
-  tags = {
-    Name = "${var.project_name}-tg"
-  }
-}
-
-# ALB Listener
-resource "aws_lb_listener" "mapreduce_listener" {
-  load_balancer_arn = aws_lb.mapreduce_alb.arn
-  port              = "80"
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.mapreduce_tg.arn
-  }
-}
-
-# Launch Template
-resource "aws_launch_template" "mapreduce_lt" {
-  name_prefix   = "${var.project_name}-lt"
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = var.instance_type
-
-  vpc_security_group_ids = [aws_security_group.mapreduce_sg.id]
-
-  user_data = base64encode(templatefile("${path.module}/user_data.sh", {
-    s3_bucket = aws_s3_bucket.mapreduce_bucket.bucket
-    aws_region = var.aws_region
-  }))
-
-  iam_instance_profile {
-    name = aws_iam_instance_profile.mapreduce_profile.name
-  }
-
-  tag_specifications {
-    resource_type = "instance"
-    tags = {
-      Name = "${var.project_name}-instance"
-    }
-  }
-}
-
-# Auto Scaling Group
-resource "aws_autoscaling_group" "mapreduce_asg" {
-  name                = "${var.project_name}-asg"
-  vpc_zone_identifier = aws_subnet.public_subnets[*].id
-  target_group_arns   = [aws_lb_target_group.mapreduce_tg.arn]
-  health_check_type   = "ELB"
-  health_check_grace_period = 300
-
-  min_size         = var.min_instances
-  max_size         = var.max_instances
-  desired_capacity = var.desired_instances
-
-  launch_template {
-    id      = aws_launch_template.mapreduce_lt.id
-    version = "$Latest"
-  }
-
-  tag {
-    key                 = "Name"
-    value               = "${var.project_name}-asg-instance"
-    propagate_at_launch = true
-  }
-}
+# Note: Auto Scaling Group rimosso - ora usiamo istanze separate in instances.tf
+# Le istanze master e worker sono definite in aws/terraform/instances.tf
 
 # S3 Bucket
 resource "aws_s3_bucket" "mapreduce_bucket" {

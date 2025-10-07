@@ -191,7 +191,7 @@ func (s *S3Client) DeleteFile(s3Key string) error {
 // GetS3ConfigFromEnv ottiene la configurazione S3 dalle variabili d'ambiente
 func GetS3ConfigFromEnv() S3Config {
 	config := S3Config{
-		Bucket:  os.Getenv("AWS_S3_BUCKET"),
+		Bucket:  os.Getenv("S3_BUCKET_NAME"),
 		Region:  os.Getenv("AWS_REGION"),
 		Enabled: os.Getenv("S3_SYNC_ENABLED") == "true",
 	}
@@ -434,8 +434,10 @@ func (sm *S3StorageManager) GetStorageStats() map[string]interface{} {
 		intermediateFiles, _ := sm.client.ListFiles("intermediate/")
 		backupFiles, _ := sm.client.ListFiles("backups/")
 		logFiles, _ := sm.client.ListFiles("logs/")
+		inputFiles, _ := sm.client.ListFiles("data/")
 
 		stats["files"] = map[string]interface{}{
+			"input":        len(inputFiles),
 			"output":       len(outputFiles),
 			"intermediate": len(intermediateFiles),
 			"backups":      len(backupFiles),
@@ -444,4 +446,81 @@ func (sm *S3StorageManager) GetStorageStats() map[string]interface{} {
 	}
 
 	return stats
+}
+
+// DownloadInputData scarica i file di input da S3
+func (sm *S3StorageManager) DownloadInputData(localPath string) error {
+	if !sm.enabled {
+		return fmt.Errorf("S3 non abilitato")
+	}
+
+	LogInfo("Scaricando file di input da S3...")
+	
+	// Crea la directory locale se non esiste
+	if err := os.MkdirAll(localPath, 0755); err != nil {
+		return fmt.Errorf("errore creazione directory %s: %v", localPath, err)
+	}
+
+	// Lista i file nella directory data/ su S3
+	files, err := sm.client.ListFiles("data/")
+	if err != nil {
+		return fmt.Errorf("errore list file input da S3: %v", err)
+	}
+
+	if len(files) == 0 {
+		LogWarn("Nessun file di input trovato su S3")
+		return nil
+	}
+
+	// Scarica ogni file
+	for _, file := range files {
+		// Estrai il nome del file dalla chiave S3
+		fileName := strings.TrimPrefix(file, "data/")
+		if fileName == "" {
+			continue
+		}
+		
+		localFilePath := filepath.Join(localPath, fileName)
+		
+		LogInfo("Scaricando %s -> %s", file, localFilePath)
+		if err := sm.client.DownloadFile(file, localFilePath); err != nil {
+			LogError("Errore download %s: %v", file, err)
+			continue
+		}
+	}
+
+	LogInfo("Download file di input da S3 completato: %d file", len(files))
+	return nil
+}
+
+// UploadInputData carica i file di input su S3
+func (sm *S3StorageManager) UploadInputData(localPath string) error {
+	if !sm.enabled {
+		return fmt.Errorf("S3 non abilitato")
+	}
+
+	LogInfo("Caricando file di input su S3...")
+	return sm.client.SyncDirectory(localPath, "data/")
+}
+
+// GetInputFilesList restituisce la lista dei file di input disponibili su S3
+func (sm *S3StorageManager) GetInputFilesList() ([]string, error) {
+	if !sm.enabled {
+		return nil, fmt.Errorf("S3 non abilitato")
+	}
+
+	files, err := sm.client.ListFiles("data/")
+	if err != nil {
+		return nil, err
+	}
+
+	// Filtra solo i file (non le directory)
+	var inputFiles []string
+	for _, file := range files {
+		if !strings.HasSuffix(file, "/") && strings.HasPrefix(file, "data/") {
+			inputFiles = append(inputFiles, strings.TrimPrefix(file, "data/"))
+		}
+	}
+
+	return inputFiles, nil
 }

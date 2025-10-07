@@ -45,27 +45,65 @@ variable "repo_branch" {
   default     = "main"
 }
 
-# EC2 Configuration
+# EC2 Configuration - Separate Master/Worker Instances
+variable "master_count" {
+  description = "Number of master instances"
+  type        = number
+  default     = 3
+}
+
+variable "worker_count" {
+  description = "Number of worker instances"
+  type        = number
+  default     = 3
+}
+
+variable "master_instance_type" {
+  description = "EC2 instance type for masters"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "worker_instance_type" {
+  description = "EC2 instance type for workers"
+  type        = string
+  default     = "t3.small"
+}
+
+variable "key_pair_name" {
+  description = "Name of the EC2 key pair"
+  type        = string
+  default     = "mapreduce-key"
+}
+
+variable "public_key" {
+  description = "Public SSH key content"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# Legacy variables (deprecated - use master_count/worker_count instead)
 variable "instance_type" {
-  description = "EC2 instance type"
+  description = "EC2 instance type (deprecated - use master_instance_type/worker_instance_type)"
   type        = string
   default     = "t3.medium"
 }
 
 variable "min_instances" {
-  description = "Minimum number of instances"
+  description = "Minimum number of instances (deprecated)"
   type        = number
   default     = 2
 }
 
 variable "max_instances" {
-  description = "Maximum number of instances"
+  description = "Maximum number of instances (deprecated)"
   type        = number
   default     = 10
 }
 
 variable "desired_instances" {
-  description = "Desired number of instances"
+  description = "Desired number of instances (deprecated)"
   type        = number
   default     = 3
 }
